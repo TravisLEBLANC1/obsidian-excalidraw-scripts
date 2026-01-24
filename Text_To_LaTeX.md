@@ -3,7 +3,7 @@
 
 Replaces LaTeX formulas between $ .. $ in a text by actual LaTeX formulas and reversely 
 
-
+![text_to_latex image](text-to-latex.png)
 
 if only texts are selected, the text is transformed into text + LaTeX:
 - the LaTeX parts must not contain line break

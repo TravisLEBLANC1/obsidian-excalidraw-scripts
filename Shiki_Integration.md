@@ -1,7 +1,11 @@
 
 /*
-the siki Highlighter plugin to add syntax highliting to text elements
+Use the siki Highlighter plugin to add syntax highliting to text elements
 
+![shiki image](shiki-integration.png)
+
+
+Require https://github.com/mProjectsCode/obsidian-shiki-plugin installed
 
 if one text element is selected:
 - split it in small part with colors given by the current shiki config
