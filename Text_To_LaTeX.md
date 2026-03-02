@@ -108,11 +108,28 @@ function updatePosition(idLineTable, x0, y0){
 	return y0 + hmax;
 }
 
+// add "\color{color}" at the begining of str if it does not contain a color yet
+function addColor(str, color){
+	const regex = /^\\color{[#A-Za-z0-9]*}/g;
+	const found = str.match(regex);
+	if (!found && color !== "#000000") {
+		return "\\color{" + color + "}" + str
+	}else{
+		return str
+	}
+}
+
+// remove the begining "\color{color}" of str if there is one
+function removeColor(str){
+	const regex = /^\\color{[#A-Za-z0-9]*}/g;
+	return str.replace(regex, "");
+}
+
 // add part as a latex of as a text depending on part.islatex
 // return id
-function addTextOrLatex(part,x,y){
+function addTextOrLatex(part,x,y,color){
 	if (part.islatex) {	      
-		return ea.addLaTex(x, y, part.str); 
+		return ea.addLaTex(x, y, addColor(part.str, color)); 
 	}else { 
 		return ea.addText(x, y, part.str);
 	}
@@ -157,11 +174,12 @@ for (const el of txt_elements) {
 	let y = el.y;
 	let idTable = []; // table of elements to group
 	copyStyleGlobal(el); // copy the style el for the next elements
+	const color = el.strokeColor;
 	for (const line of lines){
 		const lineIdTable = [];
 		for (const part of splitLatex(line)) {
 			if (part.length == 0) continue;
-			let id = await addTextOrLatex(part,0,0);
+			let id = await addTextOrLatex(part,0,0,color);
 			lineIdTable.push(id);
 		}
 		y = updatePosition(lineIdTable, el.x, y);
@@ -193,7 +211,9 @@ for (let i = 0; i < sortedEls.length; i++){
 	}else if (el.type === "image"){
 		const equation = ea.targetView.excalidrawData.getEquation(el.fileId);
 		if (equation){
-			resultString += "$" + equation.latex + "$";
+			// if you prefere to keep the color, use this line instead:
+			// resultString += "$" + equation.latex + "$";
+			resultString += "$" + removeColor(equation.latex) + "$";
 			elToDelete.push(el);
 			if (i+1 < sortedEls.length && isLineBreak(el,sortedEls[i+1])){
 				resultString += "\n";
