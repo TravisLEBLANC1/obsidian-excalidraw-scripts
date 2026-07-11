@@ -109,7 +109,7 @@ const SCALE_PRESETS = [
 ];
 
 const COLOR_PRESETS = [
-  "#000000",
+  "#1e1e1e",
   "#e03131",
   "#2f9e44",
   "#1971c2",
@@ -129,10 +129,10 @@ const FONT_PRESETS = [
 // 2. Global State Management
 // ---------------------------------------------------------
 const GRAPH_DEFAULTS = {
-  custom: { customFormula: "Math.sin(x) * x", xMin: -10, xMax: 10, xScale: 30, yScale: 30, resolution: 100, showAxes: true, axesColor: "#888888", closePlot: false, strokeColor: "#000000", strokeWidth: 2, roughness: 0 },
-  polynomial: { polyCoeffs: "1, 0, -5", xMin: -4, xMax: 4, xScale: 50, yScale: 10, resolution: 100, showAxes: true, axesColor: "#888888", closePlot: false, strokeColor: "#000000", strokeWidth: 2, roughness: 0 },
-  gaussian: { gaussMean: 0, gaussStdDev: 1, xMin: -4, xMax: 4, xScale: 80, yScale: 300, resolution: 100, showAxes: true, axesColor: "#888888", closePlot: false, strokeColor: "#000000", strokeWidth: 2, roughness: 0 },
-  poisson: { poissonLambda: 4, xMin: 0, xMax: 12, xScale: 30, yScale: 300, resolution: 100, showAxes: true, axesColor: "#888888", closePlot: false, strokeColor: "#000000", strokeWidth: 2, roughness: 0 }
+  custom: { customFormula: "Math.sin(x) * x", xMin: -10, xMax: 10, xScale: 30, yScale: 30, resolution: 100, showAxes: true, axesColor: "#888888", closePlot: false, strokeColor: "#1e1e1e", strokeWidth: 2, roughness: 0 },
+  polynomial: { polyCoeffs: "1, 0, -5", xMin: -4, xMax: 4, xScale: 50, yScale: 10, resolution: 100, showAxes: true, axesColor: "#888888", closePlot: false, strokeColor: "#1e1e1e", strokeWidth: 2, roughness: 0 },
+  gaussian: { gaussMean: 0, gaussStdDev: 1, xMin: -4, xMax: 4, xScale: 80, yScale: 300, resolution: 100, showAxes: true, axesColor: "#888888", closePlot: false, strokeColor: "#1e1e1e", strokeWidth: 2, roughness: 0 },
+  poisson: { poissonLambda: 4, xMin: 0, xMax: 12, xScale: 30, yScale: 300, resolution: 100, showAxes: true, axesColor: "#888888", closePlot: false, strokeColor: "#1e1e1e", strokeWidth: 2, roughness: 0 }
 };
 
 let state = {
@@ -140,7 +140,7 @@ let state = {
   editTargetId: [],
   formula: {
     text: "\\sum_{i=1}^n i = \\frac{n(n+1)}{2}",
-    color: "#000000",
+    color: "#1e1e1e",
     font : "",
     scale: 3
   },
@@ -262,11 +262,7 @@ async function saveSettings() {
 
 // add "\color{color}" at the begining of str if it does not contain a color yet
 function addColor(str, color) {
-	if (color !== "#000000") {
-		return "\\color{" + color + "}" + str
-	}else{
-		return str
-	}
+  return "\\color{" + color + "}" + str
 }
 
 function addFont(str, font) {
@@ -283,7 +279,7 @@ function getColor(str) {
   if (matches)
 	  return matches[1];
   else
-    return "#000000";
+    return "#1e1e1e";
 }
 
 function getFont(str) {
@@ -366,7 +362,7 @@ function injectCSS(contentEl) {
       margin-left: 4px;
       transition: background-color 120ms ease;
     }
-
+ 
     .excalimath-selection-indicator.is-selected {
       background: var(--color-green);
     }
@@ -377,11 +373,20 @@ function injectCSS(contentEl) {
     margin-top: -15px;
     margin-bottom: 8px;
     }
-
+ 
     .excalimath-scale-btn {
         padding: 2px 0;
         font-size: 11px;
         min-height: 24px;
+    }
+ 
+    .excalimath-scale-btn:hover:not(.is-active) {
+        background: var(--background-modifier-hover);
+    }
+ 
+    .excalimath-scale-btn.is-active {
+        background: var(--interactive-accent);
+        color: var(--text-on-accent);
     }
     .excalimath-color-presets {
     display: grid;
@@ -390,7 +395,7 @@ function injectCSS(contentEl) {
     margin-top: -6px;
     margin-bottom: 8px;
     }
-
+ 
     .excalimath-color-btn,
     .excalimath-color-picker {
         width: 100%;
@@ -400,20 +405,20 @@ function injectCSS(contentEl) {
         cursor: pointer;
         padding: 0;
     }
-
+ 
     .excalimath-color-picker {
         background: none;
         overflow: hidden;
     }
-
+ 
     .excalimath-color-picker::-webkit-color-swatch-wrapper {
         padding: 0;
     }
-
+ 
     .excalimath-color-picker::-webkit-color-swatch {
         border: none;
     }
-
+ 
     .excalimath-color-btn.is-active {
         outline: 2px solid var(--interactive-accent);
         outline-offset: 1px;
@@ -423,42 +428,43 @@ function injectCSS(contentEl) {
       margin-top: -13px;
       margin-bottom: 8px;
     }
-
+ 
     .excalimath-font-btn {
         flex: 1;
-
+ 
         height: 30px;
         padding: 0;
-
+ 
         border: none;
         border-right: 1px solid var(--background-modifier-border);
-
+ 
         background: var(--background-secondary);
         color: var(--text-normal);
-
+ 
         font-size: 16px;
         transition: background 120ms;
     }
-
+ 
     .excalimath-font-btn:first-child {
         border-radius: 8px 0 0 8px;
     }
-
+ 
     .excalimath-font-btn:last-child {
         border-radius: 0 8px 8px 0;
         border-right: none;
     }
-
+ 
     .excalimath-font-btn:hover:not(.is-active) {
         background: var(--background-modifier-hover);
     }
-
+ 
     .excalimath-font-btn.is-active {
         background: var(--interactive-accent);
         color: var(--text-on-accent);
     }
   `});
 }
+
 
 function updateSelectionIndicator() {
   const indicator = globalContentEl?.querySelector(".excalimath-selection-indicator");
@@ -546,21 +552,33 @@ function updatePreviewArea(targetContainer = null) {
   }, 300);
 }
 
-function updateColorButtons(colorRow) {
+function updateButtonsColor(colorRow) {
+  const condition = (i) => COLOR_PRESETS[i].toLowerCase() === state.formula.color.toLowerCase();
     colorRow.querySelectorAll(".excalimath-color-btn").forEach((btn, i) => {
         btn.classList.toggle(
             "is-active",
-            COLOR_PRESETS[i].toLowerCase() === state.formula.color.toLowerCase()
+            condition(i)
         );
     });
 }
 
-function updateFontButtons(fontRow){
+function updateButtonsFont(fontRow){
+  const condition = (i) => FONT_PRESETS[i].wrapper === state.formula.font;
   fontRow.querySelectorAll(".excalimath-font-btn").forEach((btn, i) => {
       btn.classList.toggle(
           "is-active",
-          FONT_PRESETS[i].wrapper === state.formula.font
+          condition(i)
       );
+  });
+}
+
+function updateButtonsScale(scaleRow) {
+  const condition = (i) => Math.abs(state.formula.scale - SCALE_PRESETS[i][1]) < 0.01;
+  scaleRow.querySelectorAll("button").forEach((btn, i) => {
+    btn.toggleClass(
+      "is-active",
+      condition(i)
+    );
   });
 }
 
@@ -569,6 +587,7 @@ function updateFontButtons(fontRow){
 // ---------------------------------------------------------
 let renderTimeout = null;
 let rescalingTimeout = null;
+let recoloringTimeout = null;
 let scaleTimeout = null;
 
 const scheduleRender = () => {
@@ -580,10 +599,19 @@ const scheduleRender = () => {
   }, 500); // wait after the last edit
 };
 
-const scheduleRescaling = () => {
+const scheduleRecoloring = (colorRow) => {
+  clearTimeout(recoloringTimeout);
+  recoloringTimeout = setTimeout(() => {
+    recoloring();
+    updateButtonsColor(colorRow);
+  }, 500);
+}
+
+const scheduleRescaling = (scaleRow) => {
   clearTimeout(rescalingTimeout);
   rescalingTimeout = setTimeout(() => {
     rescaling();
+    updateButtonsScale(scaleRow);
   }, 500);
 };
 
@@ -601,6 +629,7 @@ async function renderFormulaTabScale(container){
   const scaleSetting = new ea.obsidian.Setting(container)
     .setName(t("SCALE"))
     .setClass("excalimath-setting");
+  const scaleRow = container.createDiv({ cls: "excalimath-scale-presets" });
 
   let scaleInput;
 
@@ -612,17 +641,16 @@ async function renderFormulaTabScale(container){
         const n = parseFloat(v);
         if (!isNaN(n) && n > 0) {
           state.formula.scale = n;
-          scheduleRescaling();
+          scheduleRescaling(scaleRow);
         }
       });
 
     text.inputEl.style.width = "80px";
   });
 
-  const presetRow = container.createDiv({ cls: "excalimath-scale-presets" });
 
   SCALE_PRESETS.forEach(([label, value]) => {
-    const btn = presetRow.createEl("button", {
+    const btn = scaleRow.createEl("button", {
       text: label,
       cls: "excalimath-scale-btn",
     });
@@ -631,9 +659,10 @@ async function renderFormulaTabScale(container){
       state.formula.scale = value;
       scaleInput.setValue(String(value));
       rescaling();
+      updateButtonsScale(scaleRow);
     };
   });
-    
+  updateButtonsScale(scaleRow);
 }
 
 async function renderFormulaTabColor(container) {
@@ -647,12 +676,12 @@ async function renderFormulaTabColor(container) {
 
   colorSetting.addText(text => {
       text
-          .setPlaceholder("#000000")
+          .setPlaceholder("#1e1e1e")
           .setValue(state.formula.color)
           .onChange(v => {
               state.formula.color = v;
               recoloring();
-              updateColorButtons(colorRow);
+              updateButtonsColor(colorRow);
               renderFullUI();
           });
 
@@ -669,7 +698,7 @@ async function renderFormulaTabColor(container) {
       btn.onclick = () => {
           state.formula.color = color;
           recoloring();
-          updateColorButtons(colorRow);
+          updateButtonsColor(colorRow);
       };
   });
 
@@ -683,10 +712,9 @@ async function renderFormulaTabColor(container) {
 
   picker.oninput = () => {
       state.formula.color = picker.value;
-      recoloring();
-      updateColorButtons(colorRow);
+      scheduleRecoloring(colorRow);
   };
-  updateColorButtons(colorRow);
+  updateButtonsColor(colorRow);
 }
 
 async function renderFormulaTabFont(container) {
@@ -708,16 +736,16 @@ async function renderFormulaTabFont(container) {
       btn.onclick = () => {
           state.formula.font = wrapper;
           refont();
-          updateFontButtons(fontRow);
+          updateButtonsFont(fontRow);
       };
   });
-  updateFontButtons(fontRow);
+  updateButtonsFont(fontRow);
 }
 
 async function renderFormulaTab(container) {
   await renderFormulaTabColor(container);
-  await renderFormulaTabScale(container);
   await renderFormulaTabFont(container);
+  await renderFormulaTabScale(container);
   if (state.editTargetId.length === 1) {
     container.appendChild(cmContainer);
   }
@@ -1106,7 +1134,7 @@ function createRawLineElement(points, color, width, roughness, isPolygon) {
     width: w,
     height: h,
     angle: 0,
-    strokeColor: color || "#000000",
+    strokeColor: color || "#1e1e1e",
     backgroundColor: "transparent",
     fillStyle: "solid",
     strokeWidth: width || 2,
@@ -1463,7 +1491,7 @@ async function checkSelection() {
             const equation = ea.targetView.excalidrawData.getEquation(el.fileId); 
             return el.type === "image" && !!equation })
           .map((el) => el.id);
-    state.formula.color = "#000000";
+    state.formula.color = "#1e1e1e";
     state.formula.scale = 1;
     changed = true;
   }
