@@ -1,12 +1,13 @@
 /*
- * ExcaliMath: Advanced LaTeX and Graph Editor Sidepanel
- *
- * This script provides a rich Sidepanel UI featuring:
- * 1. Advanced LaTeX Editor (powered by Excalidraw-Extras MathJax and CodeMirror 6)
- * 2. Scientific Graphing Editor (plots Math formulas as native scalable Excalidraw lines with axes)
- * 3. Saved Templates Library for quick reuse
- * 4. Responsive Live Previews directly rendered as SVGs with scene-aware background (Light/Dark mode)
- * 5. Automatic detection of selected LaTeX images or Math Graph lines on the canvas to edit them
+ExcaliMath: a Math Sidepanel to use LaTeX as if it was normal text
+
+1. Advanced LaTeX Editor (uses latex-suite if available)
+2. Scientific Graphing Editor
+3. Saved Templates Library for quick reuse
+4. Live editing on the canvas
+5. Automatic detection of selected LaTeX images or Math Graph lines on the canvas to edit them
+
+/!\ This script requires Excalidraw Extras Mathjax
 
 ```js 
 */
@@ -42,6 +43,7 @@ const STRINGS = {
     AXES_COLOR: "Axes Color",
     CLOSE_PLOT: "Close Plot (Connect ends)",
     STROKE_COLOR: "Color",
+    FONT : "Font",
     STROKE_WIDTH: "Stroke Width",
     ROUGHNESS: "Roughness",
     ADD_TO_LIBRARY: "Save to Library",
@@ -78,6 +80,7 @@ const STRINGS = {
     AXES_COLOR: "坐标轴颜色",
     CLOSE_PLOT: "闭合图表 (连接首尾)",
     STROKE_COLOR: "线条颜色",
+    FONT : "字体",
     STROKE_WIDTH: "线条粗细",
     ROUGHNESS: "粗糙度",
     ADD_TO_LIBRARY: "保存至库",
@@ -98,11 +101,28 @@ const STRINGS = {
 const t = (key) => STRINGS[LOCALE]?.[key] ?? STRINGS.en[key] ?? key;
 
 const SCALE_PRESETS = [
-  ["XS", 0.5],
+  ["XS", 0.75],
   ["S", 1],
-  ["M", 1.6],
-  ["L", 2.4],
-  ["XL", 3.5],
+  ["M", 1.35],
+  ["L", 1.7],
+  ["XL", 2.4],
+];
+
+const COLOR_PRESETS = [
+  "#000000",
+  "#e03131",
+  "#2f9e44",
+  "#1971c2",
+  "#f08c00",
+];
+
+const FONT_PRESETS = [
+    { label: "Normal", wrapper: "", html: ea.obsidian.getIcon("pencil").outerHTML, },
+    { label: "Sans", wrapper: "sf", html: '<span style="font-family:sans-serif">A</span>'},
+    { label: "Code", wrapper: "tt", html: '<span style="font-size:10px">&lt;/&gt;</span>' },
+    { label: "Bold", wrapper: "bf", html: '<span style="font-weight:900;font-size:17px;">B</span>', },
+    { label: "Italic", wrapper: "it", html: "<i>I</i>" },
+    { label: "Cal", wrapper: "cal", html: "𝒜" },
 ];
 
 // ---------------------------------------------------------
@@ -121,6 +141,7 @@ let state = {
   formula: {
     text: "\\sum_{i=1}^n i = \\frac{n(n+1)}{2}",
     color: "#000000",
+    font : "",
     scale: 3
   },
   graph: {
@@ -234,16 +255,26 @@ async function saveSettings() {
   await ea.setScriptSettings(settings);
 }
 
+//----------------------------
+// methods to manipulate the latex text
+// adding/removing colors/font
+//----------------------------
 
 // add "\color{color}" at the begining of str if it does not contain a color yet
-function addColor(str, color){
-	const regex = /^\\color{[#A-Za-z0-9]*}/g;
-	const found = str.match(regex);
-	if (!found && color !== "#000000") {
+function addColor(str, color) {
+	if (color !== "#000000") {
 		return "\\color{" + color + "}" + str
 	}else{
 		return str
 	}
+}
+
+function addFont(str, font) {
+  if (font !== ""){
+    return "\\" + font + " " + str 
+  }else{
+    return str
+  }
 }
 
 function getColor(str) {
@@ -255,11 +286,26 @@ function getColor(str) {
     return "#000000";
 }
 
+function getFont(str) {
+  const regex = /^\\(sf|tt|bf|tt|it|cal)/g;
+  let matches = regex.exec(str);
+  if (matches)
+	  return matches[1];
+  else
+    return "";
+}
+
 // remove the begining "\color{color}" of str if there is one
 function removeColor(str){
 	const regex = /^\\color{[#A-Za-z0-9]*}/g;
 	return str.replace(regex, "");
 }
+// remove the begining "\font" of str if there is one
+function removeFont(str){
+	const regex = /^\\(sf|tt|bf|tt|it|cal) /g;
+	return str.replace(regex, "");
+}
+
 
 async function getScale(el, latex){
   const dataurl = await ea.tex2dataURL(latex);
@@ -271,8 +317,9 @@ async function getScale(el, latex){
 
 
 async function getFinalLatex(text) {
-  if (state.formula.color) {
-    return addColor(removeColor(text), state.formula.color);
+  if (state.formula.color && state.formula.font !== undefined) {
+    const tmp = removeFont(removeColor(text));
+    return addColor(addFont(tmp, state.formula.font), state.formula.color);
   }
   return text;
 }
@@ -335,6 +382,80 @@ function injectCSS(contentEl) {
         padding: 2px 0;
         font-size: 11px;
         min-height: 24px;
+    }
+    .excalimath-color-presets {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 4px;
+    margin-top: -6px;
+    margin-bottom: 8px;
+    }
+
+    .excalimath-color-btn,
+    .excalimath-color-picker {
+        width: 100%;
+        height: 24px;
+        border: 1px solid var(--background-modifier-border);
+        border-radius: 4px;
+        cursor: pointer;
+        padding: 0;
+    }
+
+    .excalimath-color-picker {
+        background: none;
+        overflow: hidden;
+    }
+
+    .excalimath-color-picker::-webkit-color-swatch-wrapper {
+        padding: 0;
+    }
+
+    .excalimath-color-picker::-webkit-color-swatch {
+        border: none;
+    }
+
+    .excalimath-color-btn.is-active {
+        outline: 2px solid var(--interactive-accent);
+        outline-offset: 1px;
+    }
+    .excalimath-font-presets {
+      display: flex;
+      margin-top: -13px;
+      margin-bottom: 8px;
+    }
+
+    .excalimath-font-btn {
+        flex: 1;
+
+        height: 30px;
+        padding: 0;
+
+        border: none;
+        border-right: 1px solid var(--background-modifier-border);
+
+        background: var(--background-secondary);
+        color: var(--text-normal);
+
+        font-size: 16px;
+        transition: background 120ms;
+    }
+
+    .excalimath-font-btn:first-child {
+        border-radius: 8px 0 0 8px;
+    }
+
+    .excalimath-font-btn:last-child {
+        border-radius: 0 8px 8px 0;
+        border-right: none;
+    }
+
+    .excalimath-font-btn:hover:not(.is-active) {
+        background: var(--background-modifier-hover);
+    }
+
+    .excalimath-font-btn.is-active {
+        background: var(--interactive-accent);
+        color: var(--text-on-accent);
     }
   `});
 }
@@ -425,6 +546,24 @@ function updatePreviewArea(targetContainer = null) {
   }, 300);
 }
 
+function updateColorButtons(colorRow) {
+    colorRow.querySelectorAll(".excalimath-color-btn").forEach((btn, i) => {
+        btn.classList.toggle(
+            "is-active",
+            COLOR_PRESETS[i].toLowerCase() === state.formula.color.toLowerCase()
+        );
+    });
+}
+
+function updateFontButtons(fontRow){
+  fontRow.querySelectorAll(".excalimath-font-btn").forEach((btn, i) => {
+      btn.classList.toggle(
+          "is-active",
+          FONT_PRESETS[i].wrapper === state.formula.font
+      );
+  });
+}
+
 // ---------------------------------------------------------
 // 4. Formula Editor logic
 // ---------------------------------------------------------
@@ -457,9 +596,8 @@ const scheduleScaleComputation = () => {
   }, 500); // wait after the last edit
 }
 
-async function renderFormulaTab(container) {
-  container.appendChild(cmContainer);
-  
+
+async function renderFormulaTabScale(container){
   const scaleSetting = new ea.obsidian.Setting(container)
     .setName(t("SCALE"))
     .setClass("excalimath-setting");
@@ -496,24 +634,93 @@ async function renderFormulaTab(container) {
     };
   });
     
-  const colorSetting = new ea.obsidian.Setting(container).setName(t("STROKE_COLOR")).setClass("excalimath-setting");
-  let textInput, colorPicker;
+}
+
+async function renderFormulaTabColor(container) {
+  const colorSetting = new ea.obsidian.Setting(container)
+    .setName(t("STROKE_COLOR"))
+    .setClass("excalimath-setting");
+
+  const colorRow = container.createDiv({
+    cls: "excalimath-color-presets"
+  });
+
   colorSetting.addText(text => {
-      textInput = text;
-      text.setValue(state.formula.color).onChange(v => {
-          state.formula.color = v;
-          colorPicker.setValue(v);
-          recoloring();
-      }).inputEl.style.width = "100px";
+      text
+          .setPlaceholder("#000000")
+          .setValue(state.formula.color)
+          .onChange(v => {
+              state.formula.color = v;
+              recoloring();
+              updateColorButtons(colorRow);
+              renderFullUI();
+          });
+
+      text.inputEl.style.width = "90px";
   });
-  colorSetting.addColorPicker(picker => {
-      colorPicker = picker;
-      picker.setValue(state.formula.color).onChange(v => {
-          state.formula.color = v;
-          textInput.setValue(v);
-          recoloring();
+
+  COLOR_PRESETS.forEach(color => {
+      const btn = colorRow.createEl("button", {
+          cls: "excalimath-color-btn"
       });
+
+      btn.style.background = color;
+
+      btn.onclick = () => {
+          state.formula.color = color;
+          recoloring();
+          updateColorButtons(colorRow);
+      };
   });
+
+  // Color picker
+  const picker = colorRow.createEl("input", {
+      type: "color",
+      cls: "excalimath-color-picker"
+  });
+
+  picker.value = state.formula.color;
+
+  picker.oninput = () => {
+      state.formula.color = picker.value;
+      recoloring();
+      updateColorButtons(colorRow);
+  };
+  updateColorButtons(colorRow);
+}
+
+async function renderFormulaTabFont(container) {
+  const fontSetting = new ea.obsidian.Setting(container)
+    .setName(t("FONT"))
+    .setClass("excalimath-setting");
+
+  const fontRow = container.createDiv({
+    cls: "excalimath-font-presets"
+  });
+
+  FONT_PRESETS.forEach(({label, wrapper, html}) => {
+      const btn = fontRow.createEl("button", {
+          cls: "excalimath-font-btn"
+      });
+      
+      btn.innerHTML = html;
+
+      btn.onclick = () => {
+          state.formula.font = wrapper;
+          refont();
+          updateFontButtons(fontRow);
+      };
+  });
+  updateFontButtons(fontRow);
+}
+
+async function renderFormulaTab(container) {
+  await renderFormulaTabColor(container);
+  await renderFormulaTabScale(container);
+  await renderFormulaTabFont(container);
+  if (state.editTargetId.length === 1) {
+    container.appendChild(cmContainer);
+  }
 }
 
 async function renderDynamicLibraryPreview(item, container) {
@@ -589,59 +796,92 @@ async function updateScale(){
   }
 }
 
-async function rescaling(){
+
+//------------------
+// the functions rescaling/recoloring/refont 
+// apply also if there is multiple selected elements
+// they all use changeSelectedElements as a template
+//-------------------
+
+/*
+  map every selected elements using the function f
+  delete the previous elements and add the new elements to view
+*/
+async function changeSelectedElements(f) {
   if(!state.formula.text || !hasMathJax) return;
   const newtarget = [];
-  for (var i = 0; i < state.editTargetId.length; i++){
-    id = state.editTargetId[i];
-    console.log("rescaling ", id);
+  for (var id of state.editTargetId){
     let oldEl = ea.getViewElements().find(e => e.id === id);
-    if (!oldEl) return;
+    if (!oldEl) continue;
+    let x = oldEl.x;
+    let y = oldEl.y;
+    let newEl = await f(oldEl);
+    if(!newEl) continue;
+
+    ea.copyViewElementsToEAforEditing([oldEl]);
+    ea.getElement(oldEl.id).isDeleted = true;
+    newEl.groupIds = [...oldEl.groupIds];
+    newEl.angle = oldEl.angle;
+    newtarget.push(newEl.id);
+    // await ea.deleteViewElements([oldEl]);
+  };
+  await ea.addElementsToView(false, false, true);
+  state.editTargetId = newtarget;
+}
+
+/*
+apply the state.formula.scale to every selected elements
+do not change the font or the color
+*/
+async function rescaling(){
+  let f = async (oldEl) => {
     let x = oldEl.x;
     let y = oldEl.y;
     const scale = state.formula.scale || 1;
     const eq = ea.targetView.excalidrawData.getEquation(oldEl.fileId);
     if (!eq) return;
     const newid = await ea.addLaTex(x, y, eq.latex, scale, scale);
-    const newEl = ea.getElement(newid);
-
-    ea.copyViewElementsToEAforEditing([oldEl]);
-    ea.getElement(oldEl.id).isDeleted = true;
-    newEl.groupIds = [...oldEl.groupIds];
-    newEl.angle = oldEl.angle;
-    newtarget.push(newEl.id);
-    // await ea.deleteViewElements([oldEl]);
-    await ea.addElementsToView(false, false, true);
-  };
-  state.editTargetId = newtarget;
+    return ea.getElement(newid);
+  }
+  changeSelectedElements(f);
 }
 
+/*
+apply the state.formula.color to every selected elements
+do not change the font or the scaling
+*/
 async function recoloring(){
-  if(!state.formula.text || !hasMathJax) return;
-  const newtarget = [];
-  console.log(state.editTargetId);
-  for (var id of state.editTargetId){
-    console.log("recoloring ", id); 
-    let oldEl = ea.getViewElements().find(e => e.id === id);
-    if (!oldEl) return;
+  let f = async (oldEl) => {
     let x = oldEl.x;
     let y = oldEl.y;
     const eq = ea.targetView.excalidrawData.getEquation(oldEl.fileId);
     if (!eq) return;
     const scale = await getScale(oldEl, eq.latex);
-    const latex = await getFinalLatex(eq.latex);
+    const latex = addColor(removeColor(eq.latex), state.formula.color);
     const newid = await ea.addLaTex(x, y, latex, scale, scale);
-    const newEl = ea.getElement(newid);
+    return ea.getElement(newid);
+  }
+  changeSelectedElements(f);
+}
 
-    ea.copyViewElementsToEAforEditing([oldEl]);
-    ea.getElement(oldEl.id).isDeleted = true;
-    newEl.groupIds = [...oldEl.groupIds];
-    newEl.angle = oldEl.angle;
-    newtarget.push(newEl.id);
-    // await ea.deleteViewElements([oldEl]);
-    await ea.addElementsToView(false, false, true);
-  };
-  state.editTargetId = newtarget;
+/*
+apply the state.formula.font to every selected elements
+do not change the font or the scaling
+*/
+async function refont(){
+  let f = async (oldEl) => {
+    let x = oldEl.x;
+    let y = oldEl.y;
+    const eq = ea.targetView.excalidrawData.getEquation(oldEl.fileId);
+    if (!eq) return;
+    const color = await getColor(eq.latex);
+    const latexempty = removeFont(removeColor(eq.latex));
+    const scale = await getScale(oldEl, eq.latex);
+    const latex = addColor(addFont(latexempty, state.formula.font), color);
+    const newid = await ea.addLaTex(x, y, latex, scale, scale);
+    return ea.getElement(newid);
+  }
+  changeSelectedElements(f);
 }
 
 async function updateFormulae(){
@@ -1192,21 +1432,24 @@ async function checkSelection() {
     } else if (selected[0].type === "image") {
       const el = selected[0];
       const eq = ea.targetView.excalidrawData.getEquation(el.fileId);
+      const latexnoColor = removeColor(eq.latex);
+      const latexfinal = removeFont(latexnoColor);
       if(eq) {
         state.editTargetId = [el.id];
         state.activeTab = "formula";
-        state.formula.text = removeColor(eq.latex);
+        state.formula.text = latexfinal;
         if (myEditorView) {
           const doc = myEditorView.state.doc;
           myEditorView.dispatch({
             changes: {
               from: 0,
               to: doc.length,
-              insert: removeColor(eq.latex),
+              insert: latexfinal,
             },
           });
         }
         state.formula.color = getColor(eq.latex);
+        state.formula.font = getFont(latexnoColor);
         state.formula.scale = await getScale(el, eq.latex);
         
         changed = true;
