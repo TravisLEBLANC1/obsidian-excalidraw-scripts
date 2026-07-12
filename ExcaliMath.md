@@ -119,12 +119,12 @@ const COLOR_PRESETS = [
 ];
 
 const FONT_PRESETS = [
-    { label: "Normal", wrapper: "", html: ea.obsidian.getIcon("pencil").outerHTML, },
-    { label: "Sans", wrapper: "sf", html: '<span style="font-family:sans-serif">A</span>'},
-    { label: "Code", wrapper: "tt", html: '<span style="font-size:10px">&lt;/&gt;</span>' },
-    { label: "Bold", wrapper: "bf", html: '<span style="font-weight:900;font-size:17px;">B</span>', },
-    { label: "Italic", wrapper: "it", html: "<i>I</i>" },
-    { label: "Cal", wrapper: "cal", html: "𝒜" },
+    { label: "Normal", wrapper: "", html: ea.obsidian.getIcon("pencil").outerHTML, excalidraw : 5},
+    { label: "Sans", wrapper: "sf", html: '<span style="font-family:sans-serif">A</span>' , excalidraw : 6},
+    { label: "Code", wrapper: "tt", html: '<span style="font-size:10px">&lt;/&gt;</span>', excalidraw : 8 },
+    { label: "Bold", wrapper: "bf", html: '<span style="font-weight:900;font-size:17px;">B</span>', excalidraw : 7},
+    { label: "Italic", wrapper: "it", html: "<i>I</i>", excalidraw : 5 },
+    { label: "Cal", wrapper: "cal", html: "𝒜", excalidraw : 5 },
 ];
 
 // ---------------------------------------------------------
@@ -138,6 +138,8 @@ const GRAPH_DEFAULTS = {
 };
 
 const DEFAULT_LATEX = "PlaceHolder";
+const ERROR_COLOR = "#000000";
+const ERROR_FONT = "error";
 
 let state = {
   activeTab: "formula",
@@ -234,6 +236,13 @@ async function createEditorView() {
   }
 }
 
+// convert a excalidraw font into an excalimath font
+function convertFont(font){
+  const tmp = FONT_PRESETS.find((e) => e.excalidraw === font);
+  if(!tmp) return ERROR_FONT 
+  return tmp.wrapper
+}
+
 async function loadSettings() {
   const settings = ea.getScriptSettings();
   if (settings["ExcaliMath"]) {
@@ -256,7 +265,7 @@ async function loadSettings() {
           ... saved.graph,
         }
       };
-      state.editTargetId = []; 
+      state.editTargetId = [];
     } catch(e) {}
   }
 }
@@ -291,7 +300,7 @@ function getColor(str) {
   if (matches)
 	  return matches[1];
   else
-    return "#1e1e1e";
+    return ERROR_COLOR;
 }
 
 function getFont(str) {
@@ -302,6 +311,7 @@ function getFont(str) {
   else
     return "";
 }
+
 
 // remove the begining "\color{color}" of str if there is one
 function removeColor(str){
@@ -314,6 +324,23 @@ function removeFont(str){
 	return str.replace(regex, "");
 }
 
+async function getColorFromId(id) {
+  let el = ea.getViewElements().find((e) => e.id === id);
+  if (!el) return ERROR_COLOR;
+  const eq = ea.targetView.excalidrawData.getEquation(el.fileId);
+  if (!eq) return el.strokeColor;
+  return getColor(eq.latex);
+  
+}
+
+
+async function getFontFromId(id) {
+  let el = ea.getViewElements().find((e) => e.id === id);
+  if (!el) return ERROR_FONT;
+  const eq = ea.targetView.excalidrawData.getEquation(el.fileId);
+  if (!eq) return convertFont(el.fontFamily);
+  return getFont(removeColor(eq.latex)); 
+}
 
 async function getScale(el, latex){
   const dataurl = await ea.tex2dataURL(latex);
@@ -620,7 +647,6 @@ function updatePreviewArea(targetContainer = null) {
 }
 
 function updateButtonsColor(colorRow) {
-  console.log(state.formula.color);
   const condition = (i) => COLOR_PRESETS[i].toLowerCase() === state.formula.color.toLowerCase();
     colorRow.querySelectorAll(".excalimath-color-btn").forEach((btn, i) => {
         btn.classList.toggle(
@@ -1490,19 +1516,29 @@ async function addToLibrary(type, data) {
 // ---------------------------------------------------------
 // 7. Event Hooks & Setup
 // ---------------------------------------------------------
+function checkAgreement(arr, defaultVal){
+  let agreed = defaultVal;
+  if (arr.length > 0){
+    agreed = arr[0];
+  }
+  return arr.some((el) => el !== agreed)? defaultVal : agreed;
+}
+
 /* return the color if they all have the same, else return #000000*/
-async function agreedColor(editTargetId, selectedId){
-  return "#000000"
+async function agreedColor(allselectedId){
+  const allselectedColors = await Promise.all(allselectedId.map((id) => getColorFromId(id)));
+  return checkAgreement(allselectedColors, ERROR_COLOR)
 }
 
 /* return the font if they all have the same, else return "error"*/
-async function agreedFont(editTargetId, selectedId){
-  return "error"
+async function agreedFont(allselectedId){
+  const fonts = await Promise.all(allselectedId.map((id) => getFontFromId(id)));
+  return checkAgreement(fonts, ERROR_FONT)
 }
 
 /* return the scale if they all have the same, else return 0*/
 async function agreedScale(editTargetId, selectedId){
-  return 0
+  return 0 //TODO
 }
 
 async function selectSingleLatex(selected) {
@@ -1551,10 +1587,11 @@ async function selectMultiple(selected){
         const equation = ea.targetView.excalidrawData.getEquation(el.fileId); 
         return el.type === "image" && !!equation })
       .map((el) => el.id);
-  console.log("multiple?");
-  state.formula.color = await agreedColor(state.editTargetId, state.selectedId);
+  const allselectedId = state.editTargetId.concat(state.selectedId);
+  console.log(allselectedId);
+  state.formula.color = await agreedColor(allselectedId);
   state.formula.scale = await agreedScale(state.editTargetId, state.selectedId);
-  state.formula.font = await agreedFont(state.editTargetId, state.selectedId);
+  state.formula.font = await agreedFont(allselectedId);
 }
 
 async function selectGraph(selected){
@@ -1587,10 +1624,10 @@ async function checkSelection() {
     }
     
     if (mathGraphEl && state.editTargetId !== mathGraphEl.id) {
-      selectGraph(selected);
+      await selectGraph(selected);
       changed = true;
     } else if (selected[0].type === "image") {
-      selectSingleLatex(selected);
+      await selectSingleLatex(selected);
       changed = true;
     } else {
       state.editTargetId = [];
@@ -1598,7 +1635,7 @@ async function checkSelection() {
     }
   }
   if (selected.length > 1) {
-    selectMultiple(selected);
+    await selectMultiple(selected);
     changed = true;
   }
 
