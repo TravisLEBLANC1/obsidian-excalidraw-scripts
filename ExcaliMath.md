@@ -32,7 +32,7 @@ const STRINGS = {
     UPDATE: "Update Selected",
     SCALE: "Scale",
     GRAPH_TYPE: "Function Type",
-    GRAPH_FORMULA: "f(x) =",
+    GRAPH_FORMULA: "f(x)=",
     GRAPH_POLY: "Coefficients (highest power first)",
     GRAPH_GAUSS: "Mean (μ) / StdDev (σ)",
     GRAPH_POISSON: "Lambda (λ)",
@@ -49,6 +49,7 @@ const STRINGS = {
     ROUGHNESS: "Roughness",
     ADD_TO_LIBRARY: "Save to Library",
     ERROR_MATHJAX: "Excalidraw-Extras (MathJax) is required to render LaTeX formulas. Please install and enable it.",
+    ERROR_CM: "Unexpected Error: CodeMirror extraction failed",
     INFO_LATEX_SUITE: "Install 'Obsidian LaTeX Suite' for faster formula entry.",
     LIBRARY_EMPTY: "Library is empty. Save formulas or graphs to see them here.",
     LOAD: "Load",
@@ -70,7 +71,7 @@ const STRINGS = {
     UPDATE: "更新已选",
     SCALE: "缩放",
     GRAPH_TYPE: "函数类型",
-    GRAPH_FORMULA: "f(x) =",
+    GRAPH_FORMULA: "f(x)=",
     GRAPH_POLY: "系数 (最高次幂在前)",
     GRAPH_GAUSS: "均值 (μ) / 标准差 (σ)",
     GRAPH_POISSON: "Lambda (λ)",
@@ -87,6 +88,7 @@ const STRINGS = {
     ROUGHNESS: "粗糙度",
     ADD_TO_LIBRARY: "保存至库",
     ERROR_MATHJAX: "需要安装并启用 Excalidraw-Extras (MathJax) 插件才能渲染 LaTeX 公式。",
+    ERROR_CM:"意外错误：CodeMirror提取失败",
     INFO_LATEX_SUITE: "建议安装 'Obsidian LaTeX Suite' 以加快公式输入。",
     LIBRARY_EMPTY: "库为空。保存公式或图表后将在此显示。",
     LOAD: "加载",
@@ -105,9 +107,9 @@ const t = (key) => STRINGS[LOCALE]?.[key] ?? STRINGS.en[key] ?? key;
 const SCALE_PRESETS = [
   ["XS", 0.75],
   ["S", 1],
-  ["M", 1.35],
-  ["L", 1.7],
-  ["XL", 2.4],
+  ["M", 1.25],
+  ["L", 1.75],
+  ["XL", 2.25],
 ];
 
 const COLOR_PRESETS = [
@@ -130,31 +132,41 @@ const FONT_PRESETS = [
 // ---------------------------------------------------------
 // 2. Global State Management
 // ---------------------------------------------------------
-const GRAPH_DEFAULTS = {
-  custom: { customFormula: "Math.sin(x) * x", xMin: -10, xMax: 10, xScale: 30, yScale: 30, resolution: 100, showAxes: true, axesColor: "#888888", closePlot: false, strokeColor: "#1e1e1e", strokeWidth: 2, roughness: 0 },
-  polynomial: { polyCoeffs: "1, 0, -5", xMin: -4, xMax: 4, xScale: 50, yScale: 10, resolution: 100, showAxes: true, axesColor: "#888888", closePlot: false, strokeColor: "#1e1e1e", strokeWidth: 2, roughness: 0 },
-  gaussian: { gaussMean: 0, gaussStdDev: 1, xMin: -4, xMax: 4, xScale: 80, yScale: 300, resolution: 100, showAxes: true, axesColor: "#888888", closePlot: false, strokeColor: "#1e1e1e", strokeWidth: 2, roughness: 0 },
-  poisson: { poissonLambda: 4, xMin: 0, xMax: 12, xScale: 30, yScale: 300, resolution: 100, showAxes: true, axesColor: "#888888", closePlot: false, strokeColor: "#1e1e1e", strokeWidth: 2, roughness: 0 }
+const GRAPH_DEFAULTS = { 
+  customFormula: "x", 
+  xMin: -10, xMax: 10,
+  yMin : -10, yMax :10,
+  xScale: 10, yScale: 10,
+  resolution: 100,
+  graphid : 0,
+  showAxes: true, axesColor: "#888888",
+  strokeColor: "#1e1e1e", strokeWidth: 2, roughness: 0,
 };
 
 const DEFAULT_LATEX = "PlaceHolder";
+const DEFAULT_COLOR = "#1e1e1e";
+
+// error in the sense "if all selected elements don't agree
+// which value should we show?"
 const ERROR_COLOR = "#000000";
 const ERROR_FONT = "error";
+const ERROR_SCALE = "0";
 
 let state = {
   activeTab: "formula",
-  editTargetId: [], // ids from latex selected elements
-  selectedId : [], // ids from all selected elements
   formula: {
-    text: "\\sum_{i=1}^n i = \\frac{n(n+1)}{2}",
-    color: "#1e1e1e",
+    text: DEFAULT_LATEX,
+    color: DEFAULT_COLOR,
     font : "",
     scale: 3
   },
+  selectedId : [],
   graphParams: JSON.parse(JSON.stringify(GRAPH_DEFAULTS)),
   library: []
 };
 
+let maxGraphId = 0;
+let lastError = undefined;
 let globalContentEl = null;
 let previewTimeout = null;
 let myEditorView = null;
@@ -166,81 +178,69 @@ const hasLatexSuite = !!app.plugins.plugins["obsidian-latex-suite"];
 
 async function createEditorView() {
   const CM = ea.getCM6();
-  if (CM) {
-    const extensions = [
-      CM.keymap.of([
-        { key: "Shift-Enter",
-          run: () => {
-            canvaTakeFocus();
-            return true;
-          },
+  if (!CM) return false;
+  const extensions = [
+    CM.keymap.of([
+      { key: "Shift-Enter",
+        run: () => {
+          canvaTakeFocus();
+          return true;
         },
-      ]),
-      ...ea.getMathEditorExtensions(),
-      CM.EditorView.lineWrapping,
-      CM.EditorView.theme({
-      "&": { height: "100%" },
-      ".cm-scroller": { overflow: "auto" }
-      }),
-    ];
-    // Add update listener to sync state dynamically and trigger preview renders
-    extensions.push(CM.EditorView.updateListener.of((update) => {
-      if (update.docChanged) {
-        const newVal = update.state.doc.toString();
-        if (newVal !== state.formula.text) {
-          state.formula.text = newVal;
-          scheduleRender();
-        }
+      },
+    ]),
+    ...ea.getMathEditorExtensions(),
+    CM.EditorView.lineWrapping,
+    CM.EditorView.theme({
+    "&": { height: "100%" },
+    ".cm-scroller": { overflow: "auto" }
+    }),
+  ];
+  // Add update listener to sync state dynamically and trigger preview renders
+  extensions.push(CM.EditorView.updateListener.of((update) => {
+    if (update.docChanged) {
+      const newVal = update.state.doc.toString();
+      if (newVal !== state.formula.text) {
+        state.formula.text = newVal;
+        scheduleRender();
       }
-    }));
-    myEditorView = new CM.EditorView({
-        state: CM.EditorState.create({
-            doc: state.formula.text,
-            extensions: extensions
-        }),
-        parent: cmContainer
-    });
-    myEditorView.dom.addEventListener("focusout", () => {
-        const newVal = myEditorView.state.doc.toString();
-        if (newVal !== state.formula.text) {
-            state.formula.text = newVal;
-            clearTimeout(renderTimeout);
-            updateFormulae();
-            saveSettings();
-        }
-    });
+    }
+  }));
+  myEditorView = new CM.EditorView({
+      state: CM.EditorState.create({
+          doc: state.formula.text,
+          extensions: extensions
+      }),
+      parent: cmContainer
+  });
+  myEditorView.dom.addEventListener("focusout", () => {
+      const newVal = myEditorView.state.doc.toString();
+      if (newVal !== state.formula.text) {
+          state.formula.text = newVal;
+          clearTimeout(renderTimeout);
+          updateFormulae();
+          saveSettings();
+      }
+  });
 
-    // Auto-focus the editor when the tab renders
-    // setTimeout(() => myEditorView.focus(), 100);
-  } else {
-    // Fallback to TextArea if CM extraction fails
-    const textAreaSetting = new ea.obsidian.Setting(cmContainer).setClass("excalimath-setting");
-    textAreaSetting.addTextArea(text => {
-      text.setValue(state.formula.text);
-      text.inputEl.style.width = "100%";
-      text.inputEl.style.height = "120px";
-      text.inputEl.style.fontFamily = "monospace";
-      text.setPlaceholder(t("FORMULA_INPUT_PLACEHOLDER"));
-      
-      text.onChange(val => {
-        state.formula.text = val;
-        updatePreviewArea();
-        saveSettings();
-      });
-
-      // Auto-focus the textarea when the tab renders
-      // setTimeout(() => text.inputEl.focus(), 100);
-    });
-    textAreaSetting.settingEl.style.display = "block";
-    textAreaSetting.controlEl.style.width = "100%";
-  }
+  // Auto-focus the editor when the tab renders
+  // setTimeout(() => myEditorView.focus(), 100);
+  return true;
 }
 
+
+//TODO replace state.formula.font by an integer!!!
 // convert a excalidraw font into an excalimath font
-function convertFont(font){
+function excalidrawFontToMath(font) {
   const tmp = FONT_PRESETS.find((e) => e.excalidraw === font);
   if(!tmp) return ERROR_FONT 
   return tmp.wrapper
+}
+
+// convert an excalimath font into an excalidraw font 
+function mathFontToExcalidraw(font) {
+  const tmp = FONT_PRESETS.find((e) => e.wrapper === font);
+  if(!tmp) return ERROR_FONT 
+  return tmp.excalidraw
 }
 
 async function loadSettings() {
@@ -251,7 +251,7 @@ async function loadSettings() {
       // Migrate old graph settings if graphParams doesn't exist
       if (!saved.graphParams && saved.graph) {
          saved.graphParams = JSON.parse(JSON.stringify(GRAPH_DEFAULTS));
-         saved.graphParams[saved.graph.type || "custom"] = { ...saved.graphParams[saved.graph.type || "custom"], ...saved.graph };
+         saved.graphParams = { ...saved.graph };
       }
       state = {
         ...state,
@@ -265,7 +265,7 @@ async function loadSettings() {
           ... saved.graph,
         }
       };
-      state.editTargetId = [];
+      state.selectedId = [];
     } catch(e) {}
   }
 }
@@ -324,21 +324,17 @@ function removeFont(str){
 	return str.replace(regex, "");
 }
 
-async function getColorFromId(id) {
-  let el = ea.getViewElements().find((e) => e.id === id);
+async function getColorFromEl(el) {
   if (!el) return ERROR_COLOR;
   const eq = ea.targetView.excalidrawData.getEquation(el.fileId);
   if (!eq) return el.strokeColor;
-  return getColor(eq.latex);
-  
+  return getColor(eq.latex); 
 }
 
-
-async function getFontFromId(id) {
-  let el = ea.getViewElements().find((e) => e.id === id);
+async function getFontFromEl(el) {
   if (!el) return ERROR_FONT;
   const eq = ea.targetView.excalidrawData.getEquation(el.fileId);
-  if (!eq) return convertFont(el.fontFamily);
+  if (!eq) return excalidrawFontToMath(el.fontFamily);
   return getFont(removeColor(eq.latex)); 
 }
 
@@ -350,6 +346,11 @@ async function getScale(el, latex){
   return 1
 }
 
+async function getScaleFromEl(el) {
+  const eq = ea.targetView.excalidrawData.getEquation(el.fileId);
+  if (!eq) return el.fontSize/16;
+  return getScale(el, eq.latex);
+}
 
 async function getFinalLatex(text) {
   if (state.formula.color && state.formula.font !== undefined) {
@@ -357,6 +358,27 @@ async function getFinalLatex(text) {
     return addColor(addFont(tmp, state.formula.font), state.formula.color);
   }
   return text;
+}
+
+async function isLatex(id) {
+  const el = ea.getViewElements().find(e => e.id === id);
+  if (!el) return false;
+  const eq = ea.targetView.excalidrawData.getEquation(el.fileId);
+  return !!eq
+}
+
+async function isValidFormula(latex) {
+  try {
+  const dataurl = await ea.tex2dataURL(latex);
+    console.log("dataurl=", dataurl);
+    return !!dataurl;
+  } catch(e){
+    return false;
+  }
+}
+
+function isGraphElement(el) {
+  return !!el.customData?.excalimathGraph || !!el.customData?.excalimathAxes
 }
 
 // ---------------------------------------------------------
@@ -498,7 +520,7 @@ function injectCSS(contentEl) {
         background: var(--interactive-accent);
         color: var(--text-on-accent);
     }
-    .excalimath-new-latex-btn {
+    .excalimath-new-btn {
         display: block;
         width: 100%;
         margin-bottom: 12px;
@@ -510,7 +532,7 @@ function injectCSS(contentEl) {
         transition: background 120ms;
     }
 
-    .excalimath-new-latex-btn:hover {
+    .excalimath-new-btn:hover {
         background: #94d49b;
     }
         .excalimath-advanced {
@@ -545,6 +567,22 @@ function injectCSS(contentEl) {
     .excalimath-advanced-body {
         padding: 4px 10px 2px 10px;
     }
+    .excalimath-formula-error {
+        color: var(--text-error);
+        font-size: 10px;
+        text-align: center;
+
+        height: 9px;
+        line-height: 9px;
+
+        margin-bottom: -5px;
+
+        visibility: hidden;
+    }
+
+    .excalimath-formula-error.visible {
+        visibility: visible;
+    }
   `});
 }
 
@@ -552,7 +590,7 @@ function updateSelectionIndicator() {
   const indicator = globalContentEl?.querySelector(".excalimath-selection-indicator");
   if (!indicator) return;
 
-  const selected = state.editTargetId.length > 0;
+  const selected = state.selectedId.length > 0;
 
   indicator.toggleClass?.("is-selected", selected);
   indicator.title = selected ? "Editing selected element" : "No selection";
@@ -563,8 +601,8 @@ async function editorTakeFocus() {
 }
 
 async function canvaTakeFocus() {
-  if (state.editTargetId.length > 0){
-    const els = ea.getViewElements().filter(e => state.editTargetId.includes(e.id));
+  if (state.selectedId.length > 0){
+    const els = ea.getViewElements().filter(e => state.selectedId.includes(e.id));
     if(els) ea.selectElementsInView(els);
     shouldFocusEditor = false // when canva take focus, we temporarily stop focusing the editor
   }
@@ -598,7 +636,7 @@ async function renderFullUI() {
       // If the user manually changes tabs, clear the edit target so the UI resets to "Insert"
       if (state.activeTab !== tab) {
         state.activeTab = tab;
-        state.editTargetId = [];
+        state.selectedId = [];
         saveSettings();
         renderFullUI();
       }
@@ -635,16 +673,6 @@ function updatePreviewBackground(wrapper = null) {
   }
 }
 
-function updatePreviewArea(targetContainer = null) {
-  const container = targetContainer || globalContentEl?.querySelector(".excalimath-preview-container");
-  if(!container) return;
-  
-  clearTimeout(previewTimeout);
-  previewTimeout = setTimeout(async () => {
-    if(state.activeTab === "formula") await renderFormulaPreview(container);
-    else if(state.activeTab === "graph") await renderGraphPreview(container);
-  }, 300);
-}
 
 function updateButtonsColor(colorRow) {
   const condition = (i) => COLOR_PRESETS[i].toLowerCase() === state.formula.color.toLowerCase();
@@ -686,12 +714,19 @@ let renderTimeout = null;
 let rescalingTimeout = null;
 let recoloringTimeout = null;
 let scaleTimeout = null;
+let graphTimeout = null;
 
 const scheduleRender = () => {
   clearTimeout(renderTimeout);
   renderTimeout = setTimeout(() => {
-    updateFormulae();
-    saveSettings();
+    const valid = isValidFormula(state.formula.text);
+    const errorEl = globalContentEl?.querySelector(".excalimath-formula-error");
+    if (valid){
+      updateFormulae();
+      saveSettings();
+    }else{
+      return;
+    }
   }, 500); // wait after the last edit
 };
 
@@ -718,6 +753,14 @@ const scheduleScaleComputation = () => {
     updateScale();
     saveSettings();
   }, 500); // wait after the last edit
+}
+
+const scheduleGraphUpdate = () =>{
+  clearTimeout(graphTimeout);
+  graphTimeout = setTimeout(() => {
+    const success = updateGraph();
+    renderFullUI(); // need to render the error
+  }, 1000);
 }
 
 
@@ -843,14 +886,23 @@ async function renderFormulaTab(container) {
   await renderFormulaTabColor(container);
   await renderFormulaTabFont(container);
   await renderFormulaTabScale(container);
-  if (state.editTargetId.length === 0) {
+  // TODO error div ?
+  // const errorEl = container.createDiv({
+  //   cls: "excalimath-formula-error",
+  //   text: "Invalid formula",
+  // });
+
+  // errorEl.classList.toggle("visible", false);
+
+// Then create the editorView below it
+  if (state.selectedId.length === 0) {
     const newLatexBtn = container.createEl("button", {
       text: "+ new latex",
-      cls: "excalimath-new-latex-btn",
+      cls: "excalimath-new-btn",
     });
     newLatexBtn.onclick = () => newFormula();
   }
-  if (state.editTargetId.length === 1) {
+  if (state.selectedId.length === 1 && await isLatex(state.selectedId[0])) {
     container.appendChild(cmContainer);
   }
 }
@@ -864,7 +916,7 @@ async function renderDynamicLibraryPreview(item, container) {
       const exportSettings = { withBackground: false, withTheme: false };
       svg = await ea.createSVG(null, false, exportSettings, undefined, "light", 10);
     } else {
-      const elements = generateGraphElements(item.data.type, item.data.config);
+      const elements = generateGraphElements(item.data.config);
       if (elements.length > 0) {
         elements.forEach(el => {
           ea.elementsDict[el.id] = el;
@@ -887,7 +939,7 @@ async function renderDynamicLibraryPreview(item, container) {
   } else {
     // Fallback to text description if SVG generation fails
     let desc = item.type === "formula" ? item.data.text : 
-               (item.data.type === "custom" ? item.data.config.customFormula : item.data.type);
+               (item.data.type === "custom" ? item.data.customFormula : item.data.type);
     container.createDiv({ text: desc, cls: "excalimath-lib-desc" });
   }
 }
@@ -916,8 +968,8 @@ async function renderFormulaPreview(container) {
 }
 
 async function updateScale(){
-  if(!state.formula.text || !hasMathJax || state.editTargetId.length !== 1) return;
-  const el = ea.getViewElements().find(e => e.id === state.editTargetId[0]);
+  if(!state.formula.text || !hasMathJax || state.selectedId.length !== 1) return;
+  const el = ea.getViewElements().find(e => e.id === state.selectedId[0]);
   if (!el) return;
   const eq = ea.targetView.excalidrawData.getEquation(el.fileId);
   const scale = await getScale(el, eq.latex);
@@ -940,25 +992,19 @@ async function updateScale(){
   delete the previous elements and add the new elements to view
 */
 async function changeSelectedElements(f) {
-  if(!state.formula.text || !hasMathJax) return;
   const newtarget = [];
-  for (var id of state.editTargetId){
+  for (var id of state.selectedId){
     let oldEl = ea.getViewElements().find(e => e.id === id);
     if (!oldEl) continue;
+    
     let x = oldEl.x;
     let y = oldEl.y;
     let newEl = await f(oldEl);
     if(!newEl) continue;
-
-    ea.copyViewElementsToEAforEditing([oldEl]);
-    ea.getElement(oldEl.id).isDeleted = true;
-    newEl.groupIds = [...oldEl.groupIds];
-    newEl.angle = oldEl.angle;
     newtarget.push(newEl.id);
-    // await ea.deleteViewElements([oldEl]);
   };
   await ea.addElementsToView(false, false, true);
-  state.editTargetId = newtarget;
+  state.selectedId = newtarget; //TODO remove selectedId
 }
 
 /*
@@ -971,9 +1017,22 @@ async function rescaling(){
     let y = oldEl.y;
     const scale = state.formula.scale || 1;
     const eq = ea.targetView.excalidrawData.getEquation(oldEl.fileId);
-    if (!eq) return;
-    const newid = await ea.addLaTex(x, y, eq.latex, scale, scale);
-    return ea.getElement(newid);
+    if (!eq) {
+      //normal elements
+      oldEl.fontSize = 16 * scale;
+      await ea.copyViewElementsToEAforEditing([oldEl]);
+      return oldEl;
+    }else{
+      //latex elements
+      const newid = await ea.addLaTex(x, y, eq.latex, scale, scale);
+      const newEl = await ea.getElement(newid);
+      await ea.copyViewElementsToEAforEditing([oldEl]);
+      ea.getElement(oldEl.id).isDeleted = true;
+      newEl.groupIds = [...oldEl.groupIds];
+      newEl.angle = oldEl.angle;
+      return newEl
+    }
+
   }
   changeSelectedElements(f);
 }
@@ -987,11 +1046,24 @@ async function recoloring(){
     let x = oldEl.x;
     let y = oldEl.y;
     const eq = ea.targetView.excalidrawData.getEquation(oldEl.fileId);
-    if (!eq) return;
-    const scale = await getScale(oldEl, eq.latex);
-    const latex = addColor(removeColor(eq.latex), state.formula.color);
-    const newid = await ea.addLaTex(x, y, latex, scale, scale);
-    return ea.getElement(newid);
+    if (!eq) {
+      // normal elements
+      oldEl.strokeColor = state.formula.color;
+      await ea.copyViewElementsToEAforEditing([oldEl]);
+      return oldEl;
+    }
+    else{
+      // latex elements
+      const scale = await getScale(oldEl, eq.latex);
+      const latex = addColor(removeColor(eq.latex), state.formula.color);
+      const newid = await ea.addLaTex(x, y, latex, scale, scale);
+      const newEl = await ea.getElement(newid);
+      await ea.copyViewElementsToEAforEditing([oldEl]);
+      ea.getElement(oldEl.id).isDeleted = true;
+      newEl.groupIds = [...oldEl.groupIds];
+      newEl.angle = oldEl.angle;
+      return newEl
+    }
   }
   changeSelectedElements(f);
 }
@@ -1005,20 +1077,32 @@ async function refont(){
     let x = oldEl.x;
     let y = oldEl.y;
     const eq = ea.targetView.excalidrawData.getEquation(oldEl.fileId);
-    if (!eq) return;
-    const color = await getColor(eq.latex);
-    const latexempty = removeFont(removeColor(eq.latex));
-    const scale = await getScale(oldEl, eq.latex);
-    const latex = addColor(addFont(latexempty, state.formula.font), color);
-    const newid = await ea.addLaTex(x, y, latex, scale, scale);
-    return ea.getElement(newid);
+    if (!eq) {
+      // normal elements
+      oldEl.fontFamily = mathFontToExcalidraw(state.formula.font);
+      await ea.copyViewElementsToEAforEditing([oldEl]);
+      return oldEl;
+    }else {
+      //latex elements
+      const color = await getColor(eq.latex);
+      const latexempty = removeFont(removeColor(eq.latex));
+      const scale = await getScale(oldEl, eq.latex);
+      const latex = addColor(addFont(latexempty, state.formula.font), color);
+      const newid = await ea.addLaTex(x, y, latex, scale, scale);
+      const newEl = await ea.getElement(newid);
+      await ea.copyViewElementsToEAforEditing([oldEl]);
+      ea.getElement(oldEl.id).isDeleted = true;
+      newEl.groupIds = [...oldEl.groupIds];
+      newEl.angle = oldEl.angle;
+      return ea.getElement(newid);
+    }
   }
   changeSelectedElements(f);
 }
 
 async function updateFormulae(){
-  if(!state.formula.text || !hasMathJax || state.editTargetId.length !== 1) return;
-  let oldEl = ea.getViewElements().find(e => e.id === state.editTargetId[0]);
+  if(!state.formula.text || !hasMathJax || state.selectedId.length !== 1) return;
+  let oldEl = await ea.getViewElements().find(e => e.id === state.selectedId[0]);
   if (!oldEl) return;
   let x = oldEl.x;
   let y = oldEl.y;
@@ -1031,13 +1115,14 @@ async function updateFormulae(){
   ea.getElement(oldEl.id).isDeleted = true;
   newEl.groupIds = [...oldEl.groupIds];
   newEl.angle = oldEl.angle;
-  state.editTargetId = [id];
+  state.selectedId = [id];
   await ea.deleteViewElements([oldEl]);
   await ea.addElementsToView(false, false, true);
   
+  // we can't reselect it because it will steal focus, 
+  // and it is annoying to have multiple focus changes each time
   // const finalEl = ea.getViewElements().find(e => e.id === id);
   // if(finalEl) ea.selectElementsInView([finalEl]);
-
 }
 
 
@@ -1046,9 +1131,7 @@ async function newFormula() {
   ea.clear();
   let x = ea.getViewCenterPosition().x;
   let y = ea.getViewCenterPosition().y;
-  
-  // Default to the scale chosen in the UI dropdown (fallback to 1 "Small")
-  let scale = state.formula.scale || 1;
+  let scale = state.formula.scale > 0.1 ? state.formula.scale : 1 ;
   
   const id = await ea.addLaTex(x, y, await getFinalLatex(DEFAULT_LATEX), scale, scale);
   const newEl = ea.getElement(id);
@@ -1068,45 +1151,77 @@ create a new formula if there is none
 does nothing if multiple elements are selected
 */
 async function newFormulaOrFocus(){
-  if (state.editTargetId.length > 1) return ;
-  if (state.editTargetId.length === 1){
+  if (state.selectedId.length > 1) return ;
+  if (state.selectedId.length === 1){
     editorTakeFocus()
     return;
   }else{
     newFormula();
   }
-
 }
 
 // ---------------------------------------------------------
 // 5. Graph Editor logic
 // ---------------------------------------------------------
 function renderGraphTab(container) {
-    
   const dynamicInputsContainer = container.createDiv();
-  const type = state.graph.type;
-  const activeParams = state.graphParams[type];
+  const activeParams = state.graphParams;
   
+  // no graph selected
+  if (state.selectedId.length === 0) {
+    const newGraphBtn = container.createEl("button", {
+      text: "+ new Graph",
+      cls: "excalimath-new-btn",
+    });
+      newGraphBtn.onclick = () => newGraph(GRAPH_DEFAULTS);
+    return;
+  }
 
-  new ea.obsidian.Setting(dynamicInputsContainer)
+  // an error occured last time
+  if (!!lastError) {
+    const errorEl = container.createDiv({
+      cls: "excalimath-formula-error",
+      text: lastError.message,
+    });
+
+    errorEl.classList.toggle("visible", true);
+    lastError = undefined;
+  }
+
+  const textSetting = new ea.obsidian.Setting(dynamicInputsContainer)
     .setName(t("GRAPH_FORMULA"))
     .setClass("excalimath-setting")
+    .then(setting => {
+      setting.settingEl.style.display = "flex";
+      setting.settingEl.style.alignItems = "center";
+      setting.settingEl.style.flexWrap = "nowrap";
+
+      setting.nameEl.style.flex = "0 0 auto";
+      setting.nameEl.style.whiteSpace = "nowrap";
+      setting.nameEl.style.marginRight = "-50px";
+
+      setting.controlEl.style.flex = "1 1 auto";
+      setting.controlEl.style.width = "auto";
+    })
     .addText(text => {
       text.setValue(activeParams.customFormula);
       text.inputEl.style.width = "100%";
       text.inputEl.style.fontFamily = "monospace";
-      text.onChange(v => { activeParams.customFormula = v; updatePreviewArea(); saveSettings(); });
+      text.onChange(v => { 
+        activeParams.customFormula = v;
+        scheduleGraphUpdate() });
+      setTimeout(() => text.inputEl.focus(), 100);
     });
 
   const rangeSettingX = new ea.obsidian.Setting(container).setName(t("DOMAIN")).setClass("excalimath-setting");
   rangeSettingX.controlEl.addClass("excalimath-grid-2");
-  rangeSettingX.addText(text => text.setValue(String(activeParams.xMin)).onChange(v => { activeParams.xMin = parseFloat(v); updatePreviewArea(); saveSettings(); }).inputEl.style.width="100%");
-  rangeSettingX.addText(text => text.setValue(String(activeParams.xMax)).onChange(v => { activeParams.xMax = parseFloat(v); updatePreviewArea(); saveSettings(); }).inputEl.style.width="100%");
+  rangeSettingX.addText(text => text.setValue(String(activeParams.xMin)).onChange(v => { activeParams.xMin = parseFloat(v); scheduleGraphUpdate(); }).inputEl.style.width="100%");
+  rangeSettingX.addText(text => text.setValue(String(activeParams.xMax)).onChange(v => { activeParams.xMax = parseFloat(v); scheduleGraphUpdate(); }).inputEl.style.width="100%");
   
   const rangeSettingY = new ea.obsidian.Setting(container).setName(t("CODOMAIN")).setClass("excalimath-setting");
   rangeSettingY.controlEl.addClass("excalimath-grid-2");
-  rangeSettingY.addText(text => text.setValue(String(activeParams.yMin)).onChange(v => { activeParams.yMin = parseFloat(v); updatePreviewArea(); saveSettings(); }).inputEl.style.width="100%");
-  rangeSettingY.addText(text => text.setValue(String(activeParams.yMax)).onChange(v => { activeParams.yMax = parseFloat(v); updatePreviewArea(); saveSettings(); }).inputEl.style.width="100%");
+  rangeSettingY.addText(text => text.setValue(String(activeParams.yMin)).onChange(v => { activeParams.yMin = parseFloat(v); scheduleGraphUpdate(); }).inputEl.style.width="100%");
+  rangeSettingY.addText(text => text.setValue(String(activeParams.yMax)).onChange(v => { activeParams.yMax = parseFloat(v); scheduleGraphUpdate(); }).inputEl.style.width="100%");
   
   const colorSetting = new ea.obsidian.Setting(container).setName(t("STROKE_COLOR")).setClass("excalimath-setting");
   let textInput, colorPicker;
@@ -1115,7 +1230,7 @@ function renderGraphTab(container) {
       text.setValue(activeParams.strokeColor).onChange(v => {
           activeParams.strokeColor = v;
           colorPicker.setValue(v);
-          updatePreviewArea(); saveSettings();
+          scheduleGraphUpdate();
       }).inputEl.style.width = "100px";
   });
   colorSetting.addColorPicker(picker => {
@@ -1123,21 +1238,9 @@ function renderGraphTab(container) {
       picker.setValue(activeParams.strokeColor).onChange(v => {
           activeParams.strokeColor = v;
           textInput.setValue(v);
-          updatePreviewArea(); saveSettings();
+          scheduleGraphUpdate();
       });
   });
-  colorSetting.addButton(btn => btn
-      .setIcon("swatch-book")
-      .onClick(async () => {
-          const selected = await ea.showColorPicker(btn.buttonEl, "elementStroke");
-          if (selected) {
-              activeParams.strokeColor = selected;
-              textInput.setValue(selected);
-              colorPicker.setValue(selected);
-              updatePreviewArea(); saveSettings();
-          }
-      })
-  );
   const bottomToggles = container.createDiv({ cls: "excalimath-grid-2" });
 
   new ea.obsidian.Setting(bottomToggles)
@@ -1153,7 +1256,7 @@ function renderGraphTab(container) {
           text.setValue(activeParams.axesColor).onChange(v => {
               activeParams.axesColor = v;
               axesColorPicker.setValue(v);
-              updatePreviewArea(); saveSettings();
+              scheduleGraphUpdate();
           }).inputEl.style.width = "100px";
       });
       axesColorSetting.addColorPicker(picker => {
@@ -1161,7 +1264,7 @@ function renderGraphTab(container) {
           picker.setValue(activeParams.axesColor).onChange(v => {
               activeParams.axesColor = v;
               axesTextInput.setValue(v);
-              updatePreviewArea(); saveSettings();
+              scheduleGraphUpdate();
           });
       });
   }
@@ -1188,27 +1291,23 @@ function renderGraphTab(container) {
 
   const scaleSetting = new ea.obsidian.Setting(advancedBody).setName(t("SCALE_XY")).setClass("excalimath-setting");
   scaleSetting.controlEl.addClass("excalimath-grid-2");
-  scaleSetting.addText(text => text.setValue(String(activeParams.xScale)).onChange(v => { activeParams.xScale = parseFloat(v); updatePreviewArea(); saveSettings(); }).inputEl.style.width="100%");
-  scaleSetting.addText(text => text.setValue(String(activeParams.yScale)).onChange(v => { activeParams.yScale = parseFloat(v); updatePreviewArea(); saveSettings(); }).inputEl.style.width="100%");
+  scaleSetting.addText(text => text.setValue(String(activeParams.xScale)).onChange(v => { activeParams.xScale = parseFloat(v); scheduleGraphUpdate(); }).inputEl.style.width="100%");
+  scaleSetting.addText(text => text.setValue(String(activeParams.yScale)).onChange(v => { activeParams.yScale = parseFloat(v); scheduleGraphUpdate(); }).inputEl.style.width="100%");
 
   new ea.obsidian.Setting(advancedBody)
     .setName(t("RESOLUTION"))
     .setClass("excalimath-setting")
-    .addSlider(slider => slider.setLimits(10, 1000, 10).setValue(activeParams.resolution).onChange(v => { activeParams.resolution = v; updatePreviewArea(); saveSettings(); }));
+    .addSlider(slider => slider.setLimits(10, 1000, 10).setValue(activeParams.resolution).onChange(v => { activeParams.resolution = v; scheduleGraphUpdate(); }));
 
   new ea.obsidian.Setting(advancedBody)
     .setName(t("STROKE_WIDTH"))
     .setClass("excalimath-setting")
-    .addSlider(slider => slider.setLimits(0.5, 10, 0.5).setValue(activeParams.strokeWidth).onChange(v => { activeParams.strokeWidth = v; updatePreviewArea(); saveSettings(); }));
+    .addSlider(slider => slider.setLimits(0.5, 10, 0.5).setValue(activeParams.strokeWidth).onChange(v => { activeParams.strokeWidth = v; scheduleGraphUpdate(); }));
 
   new ea.obsidian.Setting(advancedBody)
     .setName(t("ROUGHNESS"))
     .setClass("excalimath-setting")
-    .addSlider(slider => slider.setLimits(0, 2, 1).setValue(activeParams.roughness).onChange(v => { activeParams.roughness = v; updatePreviewArea(); saveSettings(); }));
-
-
-  const previewContainer = createPreviewArea(container);
-  updatePreviewArea(previewContainer);
+    .addSlider(slider => slider.setLimits(0, 2, 1).setValue(activeParams.roughness).onChange(v => { activeParams.roughness = v; scheduleGraphUpdate(); }));
 }
 
 function normalizePoints(points) {
@@ -1264,18 +1363,183 @@ function createRawLineElement(points, color, width, roughness, isPolygon) {
 //  Parsing Custom function
 //---------------
 // the goal is to go from a user typed function 
-// to a TS valid function for this we add `Math.*` where needed
+// to a TS valid function
+// for flexibility, we parse the expression ourself
+// that way we can add non-TS operators like 
+// power `^` or absolute values `|.|` or multiplication with no oprators : 10x <=> 10 * x
+
+// Known function names, used both for evaluation and to disambiguate
+// "ident(" as a function call vs. implicit multiplication like "y(x+1)"
+const MATH_FUNCS = {
+  sin: Math.sin, cos: Math.cos, tan: Math.tan,
+  asin: Math.asin, acos: Math.acos, atan: Math.atan, atan2: Math.atan2,
+  sqrt: Math.sqrt, cbrt: Math.cbrt, abs: Math.abs,
+  log: Math.log, log2: Math.log2, log10: Math.log10, exp: Math.exp,
+  floor: Math.floor, ceil: Math.ceil, round: Math.round,
+  min: Math.min, max: Math.max, sign: Math.sign,
+  sinh: Math.sinh, cosh: Math.cosh, tanh: Math.tanh,
+  pow: Math.pow,
+};
+const MATH_CONSTS = { pi: Math.PI, e: Math.E };
+
+function parseExpression(source) {
+  const tokens = tokenize(source);
+  let pos = 0;
+
+  function peek() { return tokens[pos]; }
+  function next() { pos++; return tokens[pos]; }
+  function expect(value) {
+    const t = peek();
+    if (!t || t.value !== value) {
+      throw new Error(`Expected "${value}" but got "${t ? t.value : 'EOF'}"`);
+    }
+    next();
+  }
+
+  // A token that can *start* a factor, used to detect implicit multiplication
+  // e.g. "10x", "2(x+1)", "(x+1)(x-1)", "2sin(x)"
+  function startsFactor(t) {
+    if (!t) return false;
+    if (t.type === 'NUMBER' || t.type === 'IDENT') return true;
+    if (t.value === '(') return true;
+    return false;
+  }
+
+  function parseExpr() {
+    let node = parseTerm();
+    while (peek() && (peek().value === '+' || peek().value === '-')) {
+      node = { type: 'BinOp', op : peek().value, left: node, right: parseTerm() };
+    }
+    return node;
+  }
+
+  function parseTerm() {
+    let node = parseFactor();
+    for (;;) {
+      const t = peek();
+      if (t && (t.value === '*' || t.value === '/' || t.value === '%')) {
+        // const op = next().value;
+        next();
+        node = { type: 'BinOp', op : t.value, left: node, right: parseFactor() };
+      } else if (startsFactor(t)) {
+        // implicit multiplication: no operator token between factors
+        node = { type: 'BinOp', op: '*', left: node, right: parseFactor() };
+      } else {
+        break;
+      }
+    }
+    return node;
+  }
+
+  function parseFactor() {
+    if (peek() && peek().value === '-') { next(); return { type: 'Neg', expr: parseFactor() }; }
+    if (peek() && peek().value === '+') { next(); return parseFactor(); }
+    return parsePower();
+  }
+
+  function parsePower() {
+    const base = parsePrimary();
+    if (peek() && peek().value === '^') {
+      next();
+      return { type: 'Pow', left: base, right: parseFactor() };
+    }
+    return base;
+  }
+
+  function parsePrimary() {
+    const t = peek();
+    if (!t) throw new Error('Unexpected end of expression');
+
+    if (t.type === 'NUMBER') { next(); return { type: 'Num', value: parseFloat(t.value) }; }
+
+    if (t.type === 'IDENT') {
+      next();
+      const isKnownFunc = Object.prototype.hasOwnProperty.call(MATH_FUNCS, t.value);
+      if (isKnownFunc && peek() && peek().value === '(') {
+        next(); // consumes '('
+        const args = [];
+        if (peek() && peek().value !== ')') {
+          args.push(parseExpr());
+          while (peek() && peek().value === ',') { next(); args.push(parseExpr()); }
+        }
+        expect(')');
+        return { type: 'Call', name: t.value, args };
+      }
+      // Not a known function: plain identifier. If a "(" follows, it's
+      // implicit multiplication (e.g. "y(x+1)"), handled by parseTerm's loop.
+      return { type: 'Ident', name: t.value };
+    }
+
+    if (t.value === '(') { next(); const node = parseExpr(); expect(')'); return node; }
+    throw new Error(`Unexpected token "${t.value}"`);
+  }
+
+  function tokenize(str) {
+    const re = /\s*(?:([0-9]*\.?[0-9]+(?:[e][+-]?[0-9]+)?)|([A-Za-z_][A-Za-z0-9_]*)|([()+\-*/%^,]))\s*/g;
+    const result = [];
+    let m, lastIndex = 0;
+    while ((m = re.exec(str)) !== null) {
+      if (m.index !== lastIndex) throw new Error(`Unexpected character at position ${lastIndex}`);
+      if (m[1] !== undefined) result.push({ type: 'NUMBER', value: m[1] });
+      else if (m[2] !== undefined) result.push({ type: 'IDENT', value: m[2] });
+      else if (m[3] !== undefined) result.push({ type: 'OP', value: m[3] });
+      lastIndex = re.lastIndex;
+    }
+    if (lastIndex !== str.length) throw new Error(`Unexpected trailing input: "${str.slice(lastIndex)}"`);
+    return result;
+  }
+
+  const ast = parseExpr();
+  if (pos !== tokens.length) throw new Error(`Unexpected token "${tokens[pos].value}" after end of expression`);
+  return ast;
+}
+
+function evaluate(node, x) {
+  switch (node.type) {
+    case 'Num': return node.value;
+    case 'Ident':
+      if (node.name === 'x') return x;
+      if (node.name in MATH_CONSTS) return MATH_CONSTS[node.name];
+      throw new Error(`Unknown identifier "${node.name}"`);
+    case 'Neg': return -evaluate(node.expr, x);
+    case 'Pow': return Math.pow(evaluate(node.left, x), evaluate(node.right, x));
+    case 'Call': {
+      const fn = MATH_FUNCS[node.name];
+      if (!fn) throw new Error(`Unknown function "${node.name}"`);
+      return fn(...node.args.map(a => evaluate(a, x)));
+    }
+    case 'BinOp': {
+      const l = evaluate(node.left, x), r = evaluate(node.right, x);
+      switch (node.op) {
+        case '+': return l + r;
+        case '-': return l - r;
+        case '*': return l * r;
+        case '/': return l / r;
+        case '%': return l % r;
+        default: throw new Error(`Unknown operator "${node.op}"`);
+      }
+    }
+    default: throw new Error(`Unknown node type ${node.type}`);
+  }
+}
+
+function compileFormula(source) {
+  const ast = parseExpression(source);
+  // console.log("ast = ", ast);
+  return (x) => evaluate(ast, x);
+}
 
 
-function generateGraphPoints(type, graphConfig) {
+
+function generateGraphPoints(graphConfig) {
   const points = [];
   const step = (graphConfig.xMax - graphConfig.xMin) / (Math.max(1, graphConfig.resolution - 1));
+  let formula = null;
   try {
-    if(!window.mathGraphCustomFunc || window.mathGraphCustomFuncString !== graphConfig.customFormula) {
-      window.mathGraphCustomFunc = new Function('x', `with (Math) { return ${graphConfig.customFormula}; }`);
-      window.mathGraphCustomFuncString = graphConfig.customFormula;
-    }
+    formula = compileFormula(graphConfig.customFormula);
   } catch(e) {
+    lastError = e;
+    console.log(e);
     return [];
   }
 
@@ -1283,24 +1547,24 @@ function generateGraphPoints(type, graphConfig) {
     const x = graphConfig.xMin + i * step;
     let y = 0;
     try {
-      y = window.mathGraphCustomFunc(x);
+      y = formula(x);
     }catch(e){
-      continue;
+      lastError = e;
+      console.log(e);
+      return [];
     }
+    y = Math.max(Math.min(y, graphConfig.yMax), graphConfig.yMin);
     if(isNaN(y) || !isFinite(y)) continue;
     
     const px = x * graphConfig.xScale;
     const py = -y * graphConfig.yScale;
     points.push([px, py]);
   }
-  if(graphConfig.closePlot && points.length > 0) {
-    points.push([points[0][0], points[0][1]]);
-  }
   return points;
 }
 
-function generateGraphElements(type, graphConfig) {
-  const points = generateGraphPoints(type, graphConfig);
+function generateGraphElements(graphConfig) {
+  const points = generateGraphPoints(graphConfig);
   if(points.length < 2) return [];
 
   const elements = [];
@@ -1320,110 +1584,43 @@ function generateGraphElements(type, graphConfig) {
     const xAxis = createRawLineElement([[minX - xPad, 0], [maxX + xPad, 0]], graphConfig.axesColor || "#888888", 1, 0, false);
     const yAxis = createRawLineElement([[0, minY - yPad], [0, maxY + yPad]], graphConfig.axesColor || "#888888", 1, 0, false);
     elements.push(xAxis, yAxis);
+    if (graphConfig?.graphid) {
+      xAxis.customData = { excalimathAxes: graphConfig.graphid };
+      yAxis.customData = { excalimathAxes: graphConfig.graphid };
+    }
   }
 
   const mainLine = createRawLineElement(points, graphConfig.strokeColor, graphConfig.strokeWidth, graphConfig.roughness, graphConfig.closePlot);
-  mainLine.customData = { mathGraph: { type, config: { ...graphConfig } } };
+  mainLine.customData = { excalimathGraph: {  ...graphConfig } };
   elements.push(mainLine);
-
   return elements;
 }
 
-async function getPreviewDataURL(tabType, data) {
+async function newGraph(config, xcenter, ycenter) {
   ea.clear();
-  
-  if (tabType === "formula") {
-     await ea.addLaTex(0, 0, data.text);
-  } else {
-     const elements = generateGraphElements(data.type, data.config);
-     if (elements.length === 0) return null;
-     
-     // Inject newly generated elements into the workbench mapping
-     elements.forEach(el => {
-        ea.elementsDict[el.id] = el;
-     });
-  }
-
-  // Create SVG exclusively from the workbench contents
-  const exportSettings = { withBackground: false, withTheme: false };
-  const svg = await ea.createSVG(null, false, exportSettings, undefined, "light", 20);
-  ea.clear();
-  
-  if (!svg) return null;
-  
-  // Convert the exported SVG to a fully formed Base64 Data URL for the Library `img.src`
-  const svgString = svg.outerHTML;
-  const base64 = btoa(unescape(encodeURIComponent(svgString)));
-  return "data:image/svg+xml;base64," + base64;
-}
-
-async function renderGraphPreview(container) {
-  container.empty();
-  ea.clear();
-  const type = state.graph.type;
-  const config = state.graphParams[type];
-  
-  const elements = generateGraphElements(type, config);
-  if(elements.length === 0) {
-    container.createEl("div", { text: t("INVALID_FORMULA") });
+  // create new graphId
+  maxGraphId = maxGraphId + 1;
+  config.graphid = maxGraphId;
+  const elementsData = generateGraphElements(config);
+  if(elementsData.length === 0){
     return;
   }
-  
-  // Push elements into the EA workbench manually
-  elements.forEach(el => {
-     ea.elementsDict[el.id] = el;
-  });
-  
-  const exportSettings = { withBackground: false, withTheme: false };
-  const svg = await ea.createSVG(null, false, exportSettings, undefined, "light", 20);
-  ea.clear();
-  
-  if(svg) {
-      svg.style.width = "100%";
-      svg.style.height = "100%";
-      svg.style.objectFit = "contain";
-      container.appendChild(svg);
-  }
-}
-
-async function insertGraph() {
-  ea.clear();
-  const type = state.graph.type;
-  const config = state.graphParams[type];
-  const elementsData = generateGraphElements(type, config);
-  
-  if(elementsData.length === 0) {
-    new Notice(t("INVALID_FORMULA"));
-    return;
-  }
-  
   let x = ea.getViewCenterPosition().x;
   let y = ea.getViewCenterPosition().y;
   let oldEl = null;
-  
-  if (state.editTargetId) {
-    oldEl = ea.getViewElements().find(e => e.id === state.editTargetId || (e.groupIds && e.groupIds.includes(state.editTargetId)));
-    if (oldEl) {
-      const groupToDel = oldEl.groupIds?.length ? ea.getViewElements().filter(e => e.groupIds.includes(oldEl.groupIds[0])) : [oldEl];
-      
-      const bb = ea.getBoundingBox(groupToDel);
-      x = bb.topX + bb.width / 2;
-      y = bb.topY + bb.height / 2;
+  let ids = [];
 
-      ea.copyViewElementsToEAforEditing(groupToDel);
-      ea.getElements().forEach(e => e.isDeleted = true);
-    }
+  if (xcenter !== undefined) {
+    x = xcenter;
   }
-  
-  const ids = [];
+  if (ycenter !== undefined) {
+    y = ycenter
+  }
+
   elementsData.forEach(elData => {
     ea.elementsDict[elData.id] = elData;
     ids.push(elData.id);
   });
-  
-  if (ids.length > 1) {
-    ea.addToGroup(ids);
-  }
   
   const bb = ea.getBoundingBox(ids.map(id => ea.getElement(id)));
   
@@ -1433,10 +1630,31 @@ async function insertGraph() {
     const e = ea.getElement(id);
     e.x += dx; e.y += dy;
   });
-  
   await ea.addElementsToView(false, false, true);
-  const finalEls = ea.getViewElements().filter(e => ids.includes(e.id));
-  if(finalEls.length > 0) ea.selectElementsInView(finalEls);
+  // const finalEls = ea.getViewElements().filter(e => ids.includes(e.id));
+  // if(finalEls.length > 0) ea.selectElementsInView(finalEls);
+  return ids;
+}
+
+async function updateGraph(){
+  if (!state.selectedId || !state.activeTab === "graph") return;
+  
+  // TODO for the moment we delete everything
+  // maybe we could just update the series of points?
+  const newgraphids = await newGraph(state.graphParams);
+  if (newgraphids){
+    let oldEls = await ea.getViewElements()
+      .filter(el => state.selectedId.includes(el.id) && isGraphElement(el));
+    for (var oldEl of oldEls){
+      ea.copyViewElementsToEAforEditing([oldEl]);
+      ea.getElement(oldEl.id).isDeleted = true;
+      await ea.deleteViewElements([oldEl]);
+      await ea.addElementsToView(false, false, true);
+    }
+    state.selectedId = newgraphids;
+    return true;
+  }
+  return false;
 }
 
 // ---------------------------------------------------------
@@ -1516,39 +1734,52 @@ async function addToLibrary(type, data) {
 // ---------------------------------------------------------
 // 7. Event Hooks & Setup
 // ---------------------------------------------------------
-function checkAgreement(arr, defaultVal){
+function checkAgreement(arr, defaultVal, equal){
   let agreed = defaultVal;
   if (arr.length > 0){
     agreed = arr[0];
   }
-  return arr.some((el) => el !== agreed)? defaultVal : agreed;
+  return arr.some((el) => !(equal(el,agreed)))? defaultVal : agreed;
 }
 
 /* return the color if they all have the same, else return #000000*/
-async function agreedColor(allselectedId){
-  const allselectedColors = await Promise.all(allselectedId.map((id) => getColorFromId(id)));
-  return checkAgreement(allselectedColors, ERROR_COLOR)
+async function agreedColor(selected){
+  const colors = await Promise.all(selected.map((el) => getColorFromEl(el)));
+  return checkAgreement(colors, ERROR_COLOR, (a,b) => a === b)
 }
 
 /* return the font if they all have the same, else return "error"*/
-async function agreedFont(allselectedId){
-  const fonts = await Promise.all(allselectedId.map((id) => getFontFromId(id)));
-  return checkAgreement(fonts, ERROR_FONT)
+async function agreedFont(selected){
+  const fonts = await Promise.all(selected.map((el) => getFontFromEl(el)));
+  return checkAgreement(fonts, ERROR_FONT, (a,b) => a === b)
 }
 
-/* return the scale if they all have the same, else return 0*/
-async function agreedScale(editTargetId, selectedId){
-  return 0 //TODO
+/* return the scale if they all have the same, else return 0 */
+async function agreedScale(selected){
+  const scales = await Promise.all(selected.map((el) => getScaleFromEl(el)));
+  return checkAgreement(scales, ERROR_SCALE, (a,b) => Math.abs(a - b) < 0.01)
 }
 
-async function selectSingleLatex(selected) {
-  const el = selected[0];
+async function selectSingle(el) {
+  if(!el) return;
+  state.activeTab = "formula";
   const eq = ea.targetView.excalidrawData.getEquation(el.fileId);
+  if (!eq) { 
+    // non-latex part
+    state.formula.color = el.strokeColor;
+    state.formula.font = el.fontFamily ? excalidrawFontToMath(el.fontFamily) : 1;
+    state.formula.scale = el.fontScale ? el.fontScale/16 : 1;
+    state.ids.otherId = [el.id];
+    return;
+  }
+
+  // latex part
   const latexnoColor = removeColor(eq.latex);
   const latexfinal = removeFont(latexnoColor);
-  if(!eq) return;
-  state.editTargetId = [el.id];
-  state.activeTab = "formula";
+
+  state.formula.color = getColor(eq.latex);
+  state.formula.font = getFont(latexnoColor);
+  state.formula.scale = await getScale(el, eq.latex);
   state.formula.text = latexfinal;
   if (!myEditorView) return;
   const doc = myEditorView.state.doc;
@@ -1564,86 +1795,65 @@ async function selectSingleLatex(selected) {
     },
   });
   if (shouldFocusEditor) {
-    setTimeout( () => myEditorView.focus(), 100);
+    setTimeout(() => myEditorView.focus(), 100);
   }else{
     shouldFocusEditor = true; 
     // next time we can focus the editor back
   }
-  state.formula.color = getColor(eq.latex);
-  state.formula.font = getFont(latexnoColor);
-  state.formula.scale = await getScale(el, eq.latex);
 }
 
 async function selectMultiple(selected){
-  state.selectedId =  // select all non-latex elements
-    selected
-      .filter((el) => {
-        const equation = ea.targetView.excalidrawData.getEquation(el.fileId); 
-        return el.type !== "image" || !equation })
-      .map((el) => el.id);
-  state.editTargetId =  //select all latex elements
-    selected
-      .filter((el)=> {
-        const equation = ea.targetView.excalidrawData.getEquation(el.fileId); 
-        return el.type === "image" && !!equation })
-      .map((el) => el.id);
-  const allselectedId = state.editTargetId.concat(state.selectedId);
-  console.log(allselectedId);
-  state.formula.color = await agreedColor(allselectedId);
-  state.formula.scale = await agreedScale(state.editTargetId, state.selectedId);
-  state.formula.font = await agreedFont(allselectedId);
+  state.formula.color = await agreedColor(selected);
+  state.formula.scale = await agreedScale(selected);
+  state.formula.font = await agreedFont(selected);
 }
 
-async function selectGraph(selected){
-  state.editTargetId = [mathGraphEl.id];
+async function selectGraph(el){
   state.activeTab = "graph";
-  
-  const md = mathGraphEl.customData.mathGraph;
-  if (md.type) {
-      state.graph.type = md.type;
-      state.graphParams[md.type] = { ...state.graphParams[md.type], ...md.config };
-  } else {
-      // Backwards compatibility for older saved graphs
-      state.graph.type = "custom";
-      state.graphParams.custom = { ...state.graphParams.custom, ...md };
+  if (!!el.customData?.excalimathGraph) {
+    const graphid = el.customData?.excalimathGraph.graphid;
+    const axes = await ea.getViewElements()
+      .filter(el => el.customData?.excalimathAxes === graphid)
+      .map(el => el.id);
+    state.selectedId = [el.id, ...axes];
+    state.graphParams = el.customData.excalimathGraph;
+    return;
+  }
+  if (!!el.customData?.excalimathAxes) {
+    const graphid = el.customData?.excalimathAxes.graphid;
+    const axes = await ea.getViewElements()
+      .filter(el => el.customData?.excalimathAxes === graphid)
+      .map(el => el.id);
+    const graphel = await ea.getViewElements()
+      .find(el => el.customData?.excalimathGraph.graphid === graphid)
+      .map(el => el.id);
+    state.selectedId = [graphel.id, ...axes];
+    state.graphParams = graphel.customData.excalimathGraph;
+    return;
   }
 }
 
 async function checkSelection() {
   const selected = await ea.getViewSelectedElements();
-  let changed = false;
+  state.selectedId = selected.map((el) => el.id);
   if (selected.length === 0){
-    state.editTargetId = [];
-    changed = true;
+    state.selectedId = [];
   }
   if(selected.length === 1) {
-    let mathGraphEl = selected.find(el => el.customData?.mathGraph);
-    if (!mathGraphEl && selected[0].groupIds?.length > 0) {
-       const groupElements = ea.getViewElements().filter(e => e.groupIds.includes(selected[0].groupIds[0]));
-       mathGraphEl = groupElements.find(e => e.customData?.mathGraph);
-    }
-    
-    if (mathGraphEl && state.editTargetId !== mathGraphEl.id) {
-      await selectGraph(selected);
-      changed = true;
-    } else if (selected[0].type === "image") {
-      await selectSingleLatex(selected);
-      changed = true;
-    } else {
-      state.editTargetId = [];
-      changed = true;
+    if (isGraphElement(selected[0])) {
+      await selectGraph(selected[0]);
+    }else{
+      await selectSingle(selected[0]);
     }
   }
   if (selected.length > 1) {
     await selectMultiple(selected);
-    changed = true;
   }
+  console.log(state.ids);
 
-  if (changed) {
-    saveSettings();
-    renderFullUI();
-  }
-  return changed;
+
+  saveSettings();
+  renderFullUI();
 }
 
 // ---------------------------------------------------------
@@ -1652,6 +1862,10 @@ async function checkSelection() {
 async function main() {
   if (!hasMathJax) {
     new Notice(t("ERROR_MATHJAX"));
+    return;
+  }
+  if (!createEditorView()){
+    new Notice(t("ERROR_CM"));
     return;
   }
 
@@ -1671,7 +1885,7 @@ async function main() {
   if (!tab) return;
 
   globalContentEl = tab.contentEl;
-  createEditorView();
+  
   tab.onOpen = () => {
     renderFullUI();
     checkSelection();
@@ -1682,11 +1896,8 @@ async function main() {
       ea.setView(view);
       ea.clear();
     }
-    updatePreviewBackground();
-    if (state.activeTab !== "library") {
-       updatePreviewArea();
-    }
-  //  checkSelection();
+    // TODO what should we do on focus?
+    // checkSelection();
 
     // Auto-focus the formula editor whenever the sidepanel receives focus
     // if (state.activeTab === "formula") {
