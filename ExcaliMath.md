@@ -3,9 +3,8 @@ ExcaliMath: a Math Sidepanel to use LaTeX as if it was normal text
 
 1. Advanced LaTeX Editor (uses latex-suite if available)
 2. Scientific Graphing Editor
-3. Saved Templates Library for quick reuse
-4. Live editing on the canvas
-5. Automatic detection of selected LaTeX images or Math Graph lines on the canvas to edit them
+3. Live editing on the canvas
+4. Automatic detection of selected LaTeX images or Math Graph lines on the canvas to edit them
 
 /!\ This script requires Excalidraw Extras Mathjax
 
@@ -133,12 +132,14 @@ const FONT_PRESETS = [
 // 2. Global State Management
 // ---------------------------------------------------------
 const GRAPH_DEFAULTS = { 
-  customFormula: "x", 
+  customFormula: "x^2", 
   xMin: -10, xMax: 10,
   yMin : -10, yMax :10,
   xScale: 10, yScale: 10,
   resolution: 100,
   graphid : 0,
+  xcenter : undefined,
+  ycenter : undefined,
   showAxes: true, axesColor: "#888888",
   strokeColor: "#1e1e1e", strokeWidth: 2, roughness: 0,
 };
@@ -154,6 +155,7 @@ const ERROR_SCALE = "0";
 
 let state = {
   activeTab: "formula",
+  advancedOpen : false,
   formula: {
     text: DEFAULT_LATEX,
     color: DEFAULT_COLOR,
@@ -161,14 +163,11 @@ let state = {
     scale: 3
   },
   selectedId : [],
-  graphParams: JSON.parse(JSON.stringify(GRAPH_DEFAULTS)),
-  library: []
+  graphParams: undefined,
 };
 
 let maxGraphId = 0;
-let lastError = undefined;
 let globalContentEl = null;
-let previewTimeout = null;
 let myEditorView = null;
 let shouldFocusEditor = true;
 const cmContainer = document.body.createDiv({ cls: "excalimath-cm-container excalidraw-LatexPrompt" });
@@ -195,7 +194,7 @@ async function createEditorView() {
     ".cm-scroller": { overflow: "auto" }
     }),
   ];
-  // Add update listener to sync state dynamically and trigger preview renders
+  // Add update listener to sync state dynamically
   extensions.push(CM.EditorView.updateListener.of((update) => {
     if (update.docChanged) {
       const newVal = update.state.doc.toString();
@@ -218,7 +217,7 @@ async function createEditorView() {
           state.formula.text = newVal;
           clearTimeout(renderTimeout);
           updateFormulae();
-          saveSettings();
+          
       }
   });
 
@@ -241,39 +240,6 @@ function mathFontToExcalidraw(font) {
   const tmp = FONT_PRESETS.find((e) => e.wrapper === font);
   if(!tmp) return ERROR_FONT 
   return tmp.excalidraw
-}
-
-async function loadSettings() {
-  const settings = ea.getScriptSettings();
-  if (settings["ExcaliMath"]) {
-    try {
-      const saved = JSON.parse(settings["ExcaliMath"].value);
-      // Migrate old graph settings if graphParams doesn't exist
-      if (!saved.graphParams && saved.graph) {
-         saved.graphParams = JSON.parse(JSON.stringify(GRAPH_DEFAULTS));
-         saved.graphParams = { ...saved.graph };
-      }
-      state = {
-        ...state,
-        ...saved,
-        formula: {
-            ...state.formula,
-            ...saved.formula,
-        },
-        graph : {
-          ... state.graph,
-          ... saved.graph,
-        }
-      };
-      state.selectedId = [];
-    } catch(e) {}
-  }
-}
-
-async function saveSettings() {
-  const settings = ea.getScriptSettings();
-  settings["ExcaliMath"] = { value: JSON.stringify(state) };
-  await ea.setScriptSettings(settings);
 }
 
 //----------------------------
@@ -370,7 +336,6 @@ async function isLatex(id) {
 async function isValidFormula(latex) {
   try {
   const dataurl = await ea.tex2dataURL(latex);
-    console.log("dataurl=", dataurl);
     return !!dataurl;
   } catch(e){
     return false;
@@ -380,6 +345,27 @@ async function isValidFormula(latex) {
 function isGraphElement(el) {
   return !!el.customData?.excalimathGraph || !!el.customData?.excalimathAxes
 }
+
+function isGraphElementId(el, graphid) {
+  if (!!el.customData?.excalimathGraph) {
+    return el.customData.excalimathGraph.graphid === graphid;
+  }
+  if (!!el.customData?.excalimathAxes) {
+    return el.customData.excalimathAxes === graphid;
+  }
+  return false;
+}
+
+function getGraphIdFromEl(el) {
+  if (!!el.customData?.excalimathGraph) {
+    return el.customData.excalimathGraph.graphid;
+  }
+  if (!!el.customData?.excalimathAxes) {
+    return el.customData.excalimathAxes;
+  }
+  return undefined;
+}
+
 
 // ---------------------------------------------------------
 // 3. UI Construction & Rendering
@@ -395,16 +381,10 @@ function injectCSS(contentEl) {
     .excalimath-tabs button { flex: 1; border-radius: 4px 4px 0 0; border: 1px solid transparent; border-bottom: none; background: transparent; padding: 8px; box-shadow: none; cursor: pointer; color: var(--text-muted); }
     .excalimath-tabs button:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
     .excalimath-tabs button.is-active { background: var(--background-secondary); border-color: var(--background-modifier-border); color: var(--text-normal); font-weight: bold; }
-    .excalimath-preview-wrapper { flex: 0 0 180px; min-height: 180px; border: 1px solid var(--background-modifier-border); border-radius: 8px; display: flex; align-items: center; justify-content: center; margin: 15px 0; overflow: hidden; padding: 10px; position: relative; }
-    .excalimath-preview-title { position: absolute; top: 4px; left: 8px; font-size: 0.75em; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; z-index: 10;}
-    .excalimath-preview-container { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
-    .excalimath-preview-container svg, .excalimath-preview-container img { width: 100%; height: 100%; object-fit: contain; }
     .excalimath-tab-content { flex: 1; padding-right: 5px; display: flex; flex-direction: column; gap: 10px; overflow: visible; }
     .excalimath-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: auto; padding-top: 15px; border-top: 1px solid var(--background-modifier-border); flex-shrink: 0; }
     .excalimath-lib-card { background: var(--background-secondary); border: 1px solid var(--background-modifier-border); border-radius: 6px; padding: 12px; margin-bottom: 10px; }
     .excalimath-lib-card strong { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; color: var(--text-accent); }
-    .excalimath-lib-preview { width: 100%; height: 80px; background: var(--background-primary); border-radius: 4px; margin-bottom: 10px; display: flex; align-items: center; justify-content: center; padding: 4px; border: 1px solid var(--background-modifier-border);}
-    .excalimath-lib-preview img { max-width: 100%; max-height: 100%; object-fit: contain; }
     .excalimath-lib-actions { display: flex; justify-content: space-between; gap: 8px; }
     .excalimath-lib-actions button { display: flex; align-items: center; justify-content: center; gap: 4px; }
     .excalimath-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 100%; }
@@ -415,9 +395,9 @@ function injectCSS(contentEl) {
     .excalidraw-sidepanel-tab__content.excalimath-sidepanel .excalimath-cm-container.excalidraw-LatexPrompt .cm-tooltip-cursor {display: none !important;}
 
     .excalimath-selection-indicator {
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
+      width: 18px;
+      height: 18px;
+      border-radius: 100%;
       background: var(--text-faint);
       border: 1px solid var(--background-modifier-border);
       display: inline-block;
@@ -569,21 +549,40 @@ function injectCSS(contentEl) {
     }
     .excalimath-formula-error {
         color: var(--text-error);
-        font-size: 10px;
+        font-size: 12px;
         text-align: center;
 
-        height: 9px;
-        line-height: 9px;
-
-        margin-bottom: -5px;
-
-        visibility: hidden;
+        max-height: 0;
+        overflow: hidden;
+        opacity: 0;
+        margin-bottom: 0;
+        transition: max-height 100ms ease, opacity 100ms ease, margin-bottom 100ms ease;
     }
 
     .excalimath-formula-error.visible {
-        visibility: visible;
+        max-height: 60px;
+        opacity: 1;
+        margin-bottom: 10px;
     }
   `});
+}
+
+// Dynamically show an error message in the banner at the top of the side-panel,
+// without triggering a full renderFullUI(). Can be called from anywhere.
+function printError(message) {
+  if (!globalContentEl) return;
+  const errorEl = globalContentEl.querySelector(".excalimath-formula-error");
+  if (!errorEl) return;
+  errorEl.setText(message);
+  errorEl.classList.toggle("visible", true);
+}
+
+// Hide the error banner without a full renderFullUI().
+function clearError() {
+  if (!globalContentEl) return;
+  const errorEl = globalContentEl.querySelector(".excalimath-formula-error");
+  if (!errorEl) return;
+  errorEl.classList.toggle("visible", false);
 }
 
 function updateSelectionIndicator() {
@@ -623,13 +622,17 @@ async function renderFullUI() {
     <span class="excalimath-selection-indicator" title="No selection"></span>
   </h2>`;
   updateSelectionIndicator();
+
+  const errorEl = globalContentEl.createDiv({ cls: "excalimath-formula-error" });
+  errorEl.classList.toggle("visible", false);
+
   if (!hasLatexSuite && state.activeTab === "formula") {
     const info = globalContentEl.createDiv({ cls: "excalimath-info" });
     info.innerHTML = `${ea.obsidian.getIcon("info").outerHTML} <span>${t("INFO_LATEX_SUITE")}</span>`;
   }
   
   const tabsContainer = globalContentEl.createDiv({ cls: "excalimath-tabs" });
-  ["formula", "graph", "library"].forEach(tab => {
+  ["formula", "graph"].forEach(tab => {
     const btn = tabsContainer.createEl("button", { text: t(`TAB_${tab.toUpperCase()}`) });
     if(state.activeTab === tab) btn.addClass("is-active");
     btn.onclick = () => {
@@ -637,7 +640,7 @@ async function renderFullUI() {
       if (state.activeTab !== tab) {
         state.activeTab = tab;
         state.selectedId = [];
-        saveSettings();
+        
         renderFullUI();
       }
     };
@@ -646,31 +649,6 @@ async function renderFullUI() {
   const tabContent = globalContentEl.createDiv({ cls: "excalimath-tab-content" });
   if(state.activeTab === "formula") await renderFormulaTab(tabContent);
   else if(state.activeTab === "graph") renderGraphTab(tabContent);
-  else if(state.activeTab === "library") renderLibraryTab(tabContent);
-}
-
-function createPreviewArea(container) {
-  const previewWrapper = container.createDiv({ cls: "excalimath-preview-wrapper" });
-  previewWrapper.createDiv({ cls: "excalimath-preview-title", text: t("PREVIEW_TITLE") });
-  const previewContainer = previewWrapper.createDiv({ cls: "excalimath-preview-container" });
-  
-  updatePreviewBackground(previewWrapper);
-  return previewContainer;
-}
-
-function updatePreviewBackground(wrapper = null) {
-  if (!wrapper) wrapper = globalContentEl?.querySelector(".excalimath-preview-wrapper");
-  if (!wrapper) return;
-  const st = ea.getExcalidrawAPI()?.getAppState();
-  const isDark = st?.theme === "dark";
-  const bgColor = st?.viewBackgroundColor || "#ffffff";
-  
-  wrapper.style.backgroundColor = bgColor;
-  if (isDark) {
-      wrapper.style.filter = "invert(93%) hue-rotate(180deg) saturate(1.25)";
-  } else {
-      wrapper.style.filter = "none";
-  }
 }
 
 
@@ -720,10 +698,9 @@ const scheduleRender = () => {
   clearTimeout(renderTimeout);
   renderTimeout = setTimeout(() => {
     const valid = isValidFormula(state.formula.text);
-    const errorEl = globalContentEl?.querySelector(".excalimath-formula-error");
     if (valid){
       updateFormulae();
-      saveSettings();
+      
     }else{
       return;
     }
@@ -751,16 +728,15 @@ const scheduleScaleComputation = () => {
   clearTimeout(scaleTimeout);
   scaleTimeout = setTimeout(() => {
     updateScale();
-    saveSettings();
+    
   }, 500); // wait after the last edit
 }
 
 const scheduleGraphUpdate = () =>{
   clearTimeout(graphTimeout);
   graphTimeout = setTimeout(() => {
-    const success = updateGraph();
-    renderFullUI(); // need to render the error
-  }, 1000);
+    updateGraph();
+  }, 500);
 }
 
 
@@ -886,15 +862,8 @@ async function renderFormulaTab(container) {
   await renderFormulaTabColor(container);
   await renderFormulaTabFont(container);
   await renderFormulaTabScale(container);
-  // TODO error div ?
-  // const errorEl = container.createDiv({
-  //   cls: "excalimath-formula-error",
-  //   text: "Invalid formula",
-  // });
 
-  // errorEl.classList.toggle("visible", false);
-
-// Then create the editorView below it
+  // Then create the editorView below it
   if (state.selectedId.length === 0) {
     const newLatexBtn = container.createEl("button", {
       text: "+ new latex",
@@ -907,66 +876,6 @@ async function renderFormulaTab(container) {
   }
 }
 
-async function renderDynamicLibraryPreview(item, container) {
-  ea.clear();
-  let svg = null;
-  try {
-    if (item.type === "formula") {
-      await ea.addLaTex(0, 0, item.data.text);
-      const exportSettings = { withBackground: false, withTheme: false };
-      svg = await ea.createSVG(null, false, exportSettings, undefined, "light", 10);
-    } else {
-      const elements = generateGraphElements(item.data.config);
-      if (elements.length > 0) {
-        elements.forEach(el => {
-          ea.elementsDict[el.id] = el;
-        });
-        const exportSettings = { withBackground: false, withTheme: false };
-        svg = await ea.createSVG(null, false, exportSettings, undefined, "light", 20);
-      }
-    }
-  } catch(e) {
-    console.error("ExcaliMath: Failed to render library preview", e);
-  } finally {
-    ea.clear();
-  }
-
-  if (svg) {
-    svg.style.width = "100%";
-    svg.style.height = "100%";
-    svg.style.objectFit = "contain";
-    container.appendChild(svg);
-  } else {
-    // Fallback to text description if SVG generation fails
-    let desc = item.type === "formula" ? item.data.text : 
-               (item.data.type === "custom" ? item.data.customFormula : item.data.type);
-    container.createDiv({ text: desc, cls: "excalimath-lib-desc" });
-  }
-}
-
-async function renderFormulaPreview(container) {
-  container.empty();
-  if(!state.formula.text || !hasMathJax) return;
-  try {
-    ea.clear();
-    await ea.addLaTex(0, 0, await getFinalLatex(state.formula.text));
-    
-    // Generate an isolated SVG straight from the EA workbench without rendering back to the canvas
-    const exportSettings = { withBackground: false, withTheme: false };
-    const svg = await ea.createSVG(null, false, exportSettings, undefined, "light", 10);
-    ea.clear();
-    
-    if(svg) {
-      svg.style.width = "100%";
-      svg.style.height = "100%";
-      svg.style.objectFit = "contain";
-      container.appendChild(svg);
-    }
-  } catch(e) {
-    container.createEl("div", { text: t("INVALID_FORMULA") });
-  }
-}
-
 async function updateScale(){
   if(!state.formula.text || !hasMathJax || state.selectedId.length !== 1) return;
   const el = ea.getViewElements().find(e => e.id === state.selectedId[0]);
@@ -976,7 +885,7 @@ async function updateScale(){
   if (Math.abs(state.formula.scale - scale) >= 0.01){
     state.formula.scale = scale;
     renderFullUI();
-    saveSettings();
+    
   }
 }
 
@@ -1165,7 +1074,6 @@ async function newFormulaOrFocus(){
 // ---------------------------------------------------------
 function renderGraphTab(container) {
   const dynamicInputsContainer = container.createDiv();
-  const activeParams = state.graphParams;
   
   // no graph selected
   if (state.selectedId.length === 0) {
@@ -1173,19 +1081,14 @@ function renderGraphTab(container) {
       text: "+ new Graph",
       cls: "excalimath-new-btn",
     });
-      newGraphBtn.onclick = () => newGraph(GRAPH_DEFAULTS);
+      newGraphBtn.onclick = () => {
+        newGraph(GRAPH_DEFAULTS);
+      }
     return;
   }
-
-  // an error occured last time
-  if (!!lastError) {
-    const errorEl = container.createDiv({
-      cls: "excalimath-formula-error",
-      text: lastError.message,
-    });
-
-    errorEl.classList.toggle("visible", true);
-    lastError = undefined;
+  if (!state.graphParams){
+    new Notice("unexpected error : no state.graphParams");
+    return; // unexpected error
   }
 
   const textSetting = new ea.obsidian.Setting(dynamicInputsContainer)
@@ -1204,39 +1107,41 @@ function renderGraphTab(container) {
       setting.controlEl.style.width = "auto";
     })
     .addText(text => {
-      text.setValue(activeParams.customFormula);
+      text.setValue(state.graphParams.customFormula);
       text.inputEl.style.width = "100%";
       text.inputEl.style.fontFamily = "monospace";
       text.onChange(v => { 
-        activeParams.customFormula = v;
+        state.graphParams.customFormula = v;
         scheduleGraphUpdate() });
-      setTimeout(() => text.inputEl.focus(), 100);
+      // not sure we should focus for graph
+      // it's so annoying to not be able to delete
+      // setTimeout(() => text.inputEl.focus(), 100);
     });
 
   const rangeSettingX = new ea.obsidian.Setting(container).setName(t("DOMAIN")).setClass("excalimath-setting");
   rangeSettingX.controlEl.addClass("excalimath-grid-2");
-  rangeSettingX.addText(text => text.setValue(String(activeParams.xMin)).onChange(v => { activeParams.xMin = parseFloat(v); scheduleGraphUpdate(); }).inputEl.style.width="100%");
-  rangeSettingX.addText(text => text.setValue(String(activeParams.xMax)).onChange(v => { activeParams.xMax = parseFloat(v); scheduleGraphUpdate(); }).inputEl.style.width="100%");
+  rangeSettingX.addText(text => text.setValue(String(state.graphParams.xMin)).onChange(v => { state.graphParams.xMin = parseFloat(v); scheduleGraphUpdate(); }).inputEl.style.width="100%");
+  rangeSettingX.addText(text => text.setValue(String(state.graphParams.xMax)).onChange(v => { state.graphParams.xMax = parseFloat(v); scheduleGraphUpdate(); }).inputEl.style.width="100%");
   
   const rangeSettingY = new ea.obsidian.Setting(container).setName(t("CODOMAIN")).setClass("excalimath-setting");
   rangeSettingY.controlEl.addClass("excalimath-grid-2");
-  rangeSettingY.addText(text => text.setValue(String(activeParams.yMin)).onChange(v => { activeParams.yMin = parseFloat(v); scheduleGraphUpdate(); }).inputEl.style.width="100%");
-  rangeSettingY.addText(text => text.setValue(String(activeParams.yMax)).onChange(v => { activeParams.yMax = parseFloat(v); scheduleGraphUpdate(); }).inputEl.style.width="100%");
+  rangeSettingY.addText(text => text.setValue(String(state.graphParams.yMin)).onChange(v => { state.graphParams.yMin = parseFloat(v); scheduleGraphUpdate(); }).inputEl.style.width="100%");
+  rangeSettingY.addText(text => text.setValue(String(state.graphParams.yMax)).onChange(v => { state.graphParams.yMax = parseFloat(v); scheduleGraphUpdate(); }).inputEl.style.width="100%");
   
   const colorSetting = new ea.obsidian.Setting(container).setName(t("STROKE_COLOR")).setClass("excalimath-setting");
   let textInput, colorPicker;
   colorSetting.addText(text => {
       textInput = text;
-      text.setValue(activeParams.strokeColor).onChange(v => {
-          activeParams.strokeColor = v;
+      text.setValue(state.graphParams.strokeColor).onChange(v => {
+          state.graphParams.strokeColor = v;
           colorPicker.setValue(v);
           scheduleGraphUpdate();
       }).inputEl.style.width = "100px";
   });
   colorSetting.addColorPicker(picker => {
       colorPicker = picker;
-      picker.setValue(activeParams.strokeColor).onChange(v => {
-          activeParams.strokeColor = v;
+      picker.setValue(state.graphParams.strokeColor).onChange(v => {
+          state.graphParams.strokeColor = v;
           textInput.setValue(v);
           scheduleGraphUpdate();
       });
@@ -1246,23 +1151,24 @@ function renderGraphTab(container) {
   new ea.obsidian.Setting(bottomToggles)
     .setName(t("SHOW_AXES"))
     .setClass("excalimath-setting")
-    .addToggle(tgl => tgl.setValue(activeParams.showAxes).onChange(v => { activeParams.showAxes = v; renderFullUI(); saveSettings(); }));
+    .addToggle(tgl => tgl.setValue(state.graphParams.showAxes).onChange(v => 
+      { state.graphParams.showAxes = v; scheduleGraphUpdate(); }));
 
-  if (activeParams.showAxes) {
+  if (state.graphParams.showAxes) {
       const axesColorSetting = new ea.obsidian.Setting(container).setName(t("AXES_COLOR")).setClass("excalimath-setting");
       let axesTextInput, axesColorPicker;
       axesColorSetting.addText(text => {
           axesTextInput = text;
-          text.setValue(activeParams.axesColor).onChange(v => {
-              activeParams.axesColor = v;
+          text.setValue(state.graphParams.axesColor).onChange(v => {
+              state.graphParams.axesColor = v;
               axesColorPicker.setValue(v);
               scheduleGraphUpdate();
           }).inputEl.style.width = "100px";
       });
       axesColorSetting.addColorPicker(picker => {
           axesColorPicker = picker;
-          picker.setValue(activeParams.axesColor).onChange(v => {
-              activeParams.axesColor = v;
+          picker.setValue(state.graphParams.axesColor).onChange(v => {
+              state.graphParams.axesColor = v;
               axesTextInput.setValue(v);
               scheduleGraphUpdate();
           });
@@ -1281,33 +1187,33 @@ function renderGraphTab(container) {
     advancedChevron.setText(open ? "▼" : "▶");
     advancedHeader.toggleClass("is-active", open);
   };
-  setAdvancedVisibility(state.graph.advancedOpen);
+  setAdvancedVisibility(state.advancedOpen);
 
   advancedHeader.onclick = () => {
-    state.graph.advancedOpen = !state.graph.advancedOpen;
-    setAdvancedVisibility(state.graph.advancedOpen);
-    saveSettings();
+    state.advancedOpen = !state.advancedOpen;
+    setAdvancedVisibility(state.advancedOpen);
+    
   };
 
   const scaleSetting = new ea.obsidian.Setting(advancedBody).setName(t("SCALE_XY")).setClass("excalimath-setting");
   scaleSetting.controlEl.addClass("excalimath-grid-2");
-  scaleSetting.addText(text => text.setValue(String(activeParams.xScale)).onChange(v => { activeParams.xScale = parseFloat(v); scheduleGraphUpdate(); }).inputEl.style.width="100%");
-  scaleSetting.addText(text => text.setValue(String(activeParams.yScale)).onChange(v => { activeParams.yScale = parseFloat(v); scheduleGraphUpdate(); }).inputEl.style.width="100%");
+  scaleSetting.addText(text => text.setValue(String(state.graphParams.xScale)).onChange(v => { state.graphParams.xScale = parseFloat(v); scheduleGraphUpdate(); }).inputEl.style.width="100%");
+  scaleSetting.addText(text => text.setValue(String(state.graphParams.yScale)).onChange(v => { state.graphParams.yScale = parseFloat(v); scheduleGraphUpdate(); }).inputEl.style.width="100%");
 
   new ea.obsidian.Setting(advancedBody)
     .setName(t("RESOLUTION"))
     .setClass("excalimath-setting")
-    .addSlider(slider => slider.setLimits(10, 1000, 10).setValue(activeParams.resolution).onChange(v => { activeParams.resolution = v; scheduleGraphUpdate(); }));
+    .addSlider(slider => slider.setLimits(10, 1000, 10).setValue(state.graphParams.resolution).onChange(v => { state.graphParams.resolution = v; scheduleGraphUpdate(); }));
 
   new ea.obsidian.Setting(advancedBody)
     .setName(t("STROKE_WIDTH"))
     .setClass("excalimath-setting")
-    .addSlider(slider => slider.setLimits(0.5, 10, 0.5).setValue(activeParams.strokeWidth).onChange(v => { activeParams.strokeWidth = v; scheduleGraphUpdate(); }));
+    .addSlider(slider => slider.setLimits(0.5, 10, 0.5).setValue(state.graphParams.strokeWidth).onChange(v => { state.graphParams.strokeWidth = v; scheduleGraphUpdate(); }));
 
   new ea.obsidian.Setting(advancedBody)
     .setName(t("ROUGHNESS"))
     .setClass("excalimath-setting")
-    .addSlider(slider => slider.setLimits(0, 2, 1).setValue(activeParams.roughness).onChange(v => { activeParams.roughness = v; scheduleGraphUpdate(); }));
+    .addSlider(slider => slider.setLimits(0, 2, 1).setValue(state.graphParams.roughness).onChange(v => { state.graphParams.roughness = v; scheduleGraphUpdate(); }));
 }
 
 function normalizePoints(points) {
@@ -1538,8 +1444,7 @@ function generateGraphPoints(graphConfig) {
   try {
     formula = compileFormula(graphConfig.customFormula);
   } catch(e) {
-    lastError = e;
-    console.log(e);
+    printError(e.message);
     return [];
   }
 
@@ -1549,8 +1454,7 @@ function generateGraphPoints(graphConfig) {
     try {
       y = formula(x);
     }catch(e){
-      lastError = e;
-      console.log(e);
+      printError(e.message);
       return [];
     }
     y = Math.max(Math.min(y, graphConfig.yMax), graphConfig.yMin);
@@ -1560,6 +1464,7 @@ function generateGraphPoints(graphConfig) {
     const py = -y * graphConfig.yScale;
     points.push([px, py]);
   }
+  clearError();
   return points;
 }
 
@@ -1591,31 +1496,25 @@ function generateGraphElements(graphConfig) {
   }
 
   const mainLine = createRawLineElement(points, graphConfig.strokeColor, graphConfig.strokeWidth, graphConfig.roughness, graphConfig.closePlot);
-  mainLine.customData = { excalimathGraph: {  ...graphConfig } };
+
+  mainLine.customData = {excalimathGraph : {...graphConfig }};
   elements.push(mainLine);
   return elements;
 }
 
-async function newGraph(config, xcenter, ycenter) {
+async function insertGraph(config) {
   ea.clear();
-  // create new graphId
-  maxGraphId = maxGraphId + 1;
-  config.graphid = maxGraphId;
+  config.xcenter = config.xcenter === undefined ? ea.getViewCenterPosition().x : config.xcenter;
+  config.ycenter = config.ycenter === undefined ? ea.getViewCenterPosition().y : config.ycenter;
+
+  //TODO update xcenter when moving an object
+
   const elementsData = generateGraphElements(config);
   if(elementsData.length === 0){
     return;
   }
-  let x = ea.getViewCenterPosition().x;
-  let y = ea.getViewCenterPosition().y;
   let oldEl = null;
   let ids = [];
-
-  if (xcenter !== undefined) {
-    x = xcenter;
-  }
-  if (ycenter !== undefined) {
-    y = ycenter
-  }
 
   elementsData.forEach(elData => {
     ea.elementsDict[elData.id] = elData;
@@ -1624,111 +1523,47 @@ async function newGraph(config, xcenter, ycenter) {
   
   const bb = ea.getBoundingBox(ids.map(id => ea.getElement(id)));
   
-  const dx = x - (bb.width/2) - bb.topX;
-  const dy = y - (bb.height/2) - bb.topY;
+  const dx = config.xcenter - (bb.width/2) - bb.topX;
+  const dy = config.ycenter - (bb.height/2) - bb.topY;
   ids.forEach(id => {
     const e = ea.getElement(id);
     e.x += dx; e.y += dy;
   });
+  ea.addToGroup(ids);
   await ea.addElementsToView(false, false, true);
   // const finalEls = ea.getViewElements().filter(e => ids.includes(e.id));
   // if(finalEls.length > 0) ea.selectElementsInView(finalEls);
   return ids;
 }
 
+async function newGraph(config) {
+  maxGraphId = maxGraphId + 1;
+  config.graphid = maxGraphId;
+  insertGraph(config);
+}
+
 async function updateGraph(){
-  if (!state.selectedId || !state.activeTab === "graph") return;
-  
+  if (!state.selectedId || !state.activeTab === "graph" || !state.graphParams) return;
   // TODO for the moment we delete everything
   // maybe we could just update the series of points?
-  const newgraphids = await newGraph(state.graphParams);
+  const previousGraphId = state.graphParams.graphid;
+  const config = {...state.graphParams};
+  config.graphid = maxGraphId + 1;
+  const newgraphids = await insertGraph(config);
   if (newgraphids){
     let oldEls = await ea.getViewElements()
-      .filter(el => state.selectedId.includes(el.id) && isGraphElement(el));
+      .filter(el => isGraphElementId(el, previousGraphId));
     for (var oldEl of oldEls){
       ea.copyViewElementsToEAforEditing([oldEl]);
       ea.getElement(oldEl.id).isDeleted = true;
-      await ea.deleteViewElements([oldEl]);
       await ea.addElementsToView(false, false, true);
     }
     state.selectedId = newgraphids;
+    maxGraphId = maxGraphId + 1;
+    state.graphParams = config;
     return true;
   }
   return false;
-}
-
-// ---------------------------------------------------------
-// 6. Library logic
-// ---------------------------------------------------------
-function renderLibraryTab(container) {
-  if (state.library.length === 0) {
-    container.createEl("p", { text: t("LIBRARY_EMPTY"), cls: "excalimath-info" });
-    return;
-  }
-  
-  state.library.forEach((item, idx) => {
-    const card = container.createDiv({ cls: "excalimath-lib-card" });
-    card.innerHTML = `<strong>${ea.obsidian.getIcon(item.type === "formula" ? "radical" : "trending-up").outerHTML} ${item.name}</strong>`;
-    
-    const previewDiv = card.createDiv({ cls: "excalimath-lib-preview" });
-    
-    const st = ea.getExcalidrawAPI()?.getAppState();
-    const isDark = st?.theme === "dark";
-    const bgColor = st?.viewBackgroundColor === "transparent" 
-        ? (isDark ? "#1e1e1e" : "#ffffff") 
-        : (st?.viewBackgroundColor || "#ffffff");
-        
-    previewDiv.style.backgroundColor = bgColor;
-    if (isDark) {
-        previewDiv.style.filter = "invert(93%) hue-rotate(180deg) saturate(1.25)";
-    }
-
-    // Render the preview dynamically on the fly
-    renderDynamicLibraryPreview(item, previewDiv);
-
-    const actions = card.createDiv({ cls: "excalimath-lib-actions" });
-    
-    const delBtn = actions.createEl("button", { text: t("DELETE") });
-    delBtn.innerHTML = `${ea.obsidian.getIcon("trash").outerHTML} ${t("DELETE")}`;
-    delBtn.style.color = "var(--text-error)";
-    delBtn.onclick = () => {
-      state.library.splice(idx, 1);
-      saveSettings();
-      renderFullUI();
-    };
-    
-    const loadBtn = actions.createEl("button", { text: t("LOAD"), cls: "mod-cta" });
-    loadBtn.innerHTML = `${ea.obsidian.getIcon("upload").outerHTML} ${t("LOAD")}`;
-    loadBtn.onclick = () => {
-      if(item.type === "formula") {
-        state.formula = { ...state.formula, ...item.data };
-        state.activeTab = "formula";
-      } else {
-        state.graph.type = item.data.type;
-        state.graphParams[item.data.type] = { ...state.graphParams[item.data.type], ...item.data.config };
-        state.activeTab = "graph";
-      }
-      saveSettings();
-      renderFullUI();
-    };
-  });
-}
-
-async function addToLibrary(type, data) {
-  const name = await utils.inputPrompt(t("PROMPT_NAME"), "", `My ${type}`);
-  if(!name) return;
-  
-  // Exclusively store the configuration parameters. No bloated data URLs.
-  state.library.push({
-    id: ea.generateElementId(),
-    name,
-    type,
-    data: JSON.parse(JSON.stringify(data))
-  });
-  
-  await saveSettings();
-  new Notice(`Saved to library: ${name}`);
-  renderFullUI();
 }
 
 // ---------------------------------------------------------
@@ -1743,33 +1578,43 @@ function checkAgreement(arr, defaultVal, equal){
 }
 
 /* return the color if they all have the same, else return #000000*/
-async function agreedColor(selected){
+async function agreedColor(selected) {
   const colors = await Promise.all(selected.map((el) => getColorFromEl(el)));
   return checkAgreement(colors, ERROR_COLOR, (a,b) => a === b)
 }
 
 /* return the font if they all have the same, else return "error"*/
-async function agreedFont(selected){
+async function agreedFont(selected) {
   const fonts = await Promise.all(selected.map((el) => getFontFromEl(el)));
   return checkAgreement(fonts, ERROR_FONT, (a,b) => a === b)
 }
 
 /* return the scale if they all have the same, else return 0 */
-async function agreedScale(selected){
+async function agreedScale(selected) {
   const scales = await Promise.all(selected.map((el) => getScaleFromEl(el)));
   return checkAgreement(scales, ERROR_SCALE, (a,b) => Math.abs(a - b) < 0.01)
 }
 
+async function chooseTabFromSelection(selected) {
+  const el = selected.find(el => isGraphElement(el));
+  if (el) {
+    const graphid = getGraphIdFromEl(el);
+    if (!selected.find(el => !isGraphElementId(el, graphid))) {
+      state.activeTab = "graph";
+      return;
+    }
+  }
+  state.activeTab = "formula";  
+}
+
 async function selectSingle(el) {
   if(!el) return;
-  state.activeTab = "formula";
   const eq = ea.targetView.excalidrawData.getEquation(el.fileId);
   if (!eq) { 
     // non-latex part
     state.formula.color = el.strokeColor;
     state.formula.font = el.fontFamily ? excalidrawFontToMath(el.fontFamily) : 1;
     state.formula.scale = el.fontScale ? el.fontScale/16 : 1;
-    state.ids.otherId = [el.id];
     return;
   }
 
@@ -1806,10 +1651,12 @@ async function selectMultiple(selected){
   state.formula.color = await agreedColor(selected);
   state.formula.scale = await agreedScale(selected);
   state.formula.font = await agreedFont(selected);
+  if (state.activeTab === "graph") {
+    await selectGraph(selected[0]);
+  }
 }
 
 async function selectGraph(el){
-  state.activeTab = "graph";
   if (!!el.customData?.excalimathGraph) {
     const graphid = el.customData?.excalimathGraph.graphid;
     const axes = await ea.getViewElements()
@@ -1820,21 +1667,25 @@ async function selectGraph(el){
     return;
   }
   if (!!el.customData?.excalimathAxes) {
-    const graphid = el.customData?.excalimathAxes.graphid;
+    const graphid = el.customData?.excalimathAxes;
     const axes = await ea.getViewElements()
       .filter(el => el.customData?.excalimathAxes === graphid)
       .map(el => el.id);
     const graphel = await ea.getViewElements()
-      .find(el => el.customData?.excalimathGraph.graphid === graphid)
-      .map(el => el.id);
+      .find(el => el.customData?.excalimathGraph?.graphid === graphid);
+    if (!graphel) {
+      console.log("did not find graphid = ", graphid);
+      return; // error
+    }
     state.selectedId = [graphel.id, ...axes];
-    state.graphParams = graphel.customData.excalimathGraph;
+    state.graphParams = graphel.customData?.excalimathGraph;
     return;
   }
 }
 
 async function checkSelection() {
   const selected = await ea.getViewSelectedElements();
+  await chooseTabFromSelection(selected);
   state.selectedId = selected.map((el) => el.id);
   if (selected.length === 0){
     state.selectedId = [];
@@ -1849,11 +1700,16 @@ async function checkSelection() {
   if (selected.length > 1) {
     await selectMultiple(selected);
   }
-  console.log(state.ids);
-
-
-  saveSettings();
+  console.log("states = ", state.selectedId);
   renderFullUI();
+}
+
+async function computeMaxGraphId(){
+  const graphids = ea.getViewElements()
+    .filter(el => isGraphElement(el))
+    .map(el => getGraphIdFromEl(el))
+  maxGraphId = Math.max(0,...graphids) + 1;
+  return maxGraphId;
 }
 
 // ---------------------------------------------------------
@@ -1879,14 +1735,13 @@ async function main() {
     }
   }
 
-  await loadSettings();
-
   const tab = await ea.createSidepanelTab("ExcaliMath", true, true);
   if (!tab) return;
 
   globalContentEl = tab.contentEl;
   
   tab.onOpen = () => {
+    computeMaxGraphId();
     renderFullUI();
     checkSelection();
   };
@@ -1914,7 +1769,7 @@ async function main() {
 
   tab.onClose = () => {
     ea.onSceneChangeHook = null;
-    saveSettings();
+    
     // keymapScope.unregister(keymapScope);
     delete window.excalimathEditorView;
   };
@@ -1928,25 +1783,7 @@ async function main() {
         ea.setView(view);
         ea.clear();
       }
-      let needsPreviewUpdate = false;
-      const st = appState;
 
-      const currentBgColor = st.viewBackgroundColor === "transparent" 
-          ? (st.theme === "dark" ? "#1e1e1e" : "#ffffff") 
-          : (st.viewBackgroundColor || "#ffffff");
-          
-      const isDark = st.theme === "dark";
-      const wrapper = globalContentEl?.querySelector(".excalimath-preview-wrapper");
-      
-      if (wrapper) {
-         if (wrapper.style.backgroundColor !== currentBgColor || 
-            (isDark && wrapper.style.filter === "none") ||
-            (!isDark && wrapper.style.filter !== "none")
-         ) {
-             updatePreviewBackground(wrapper);
-         }
-      }
-      //scheduleScaleComputation();
       checkSelection();
     }
   };
